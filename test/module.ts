@@ -53,9 +53,9 @@ export interface PoolSeat {
 /** Instantiates the module and starts a pool of `threads` workers. Once per process. */
 export async function loadModule(threads: number): Promise<LoadedModule> {
   const js = `${OUT_DIR}/vp9.js`;
-  const wasm = `${OUT_DIR}/vp9.wasm`;
+  const wasm = `${OUT_DIR}/vp9_bg.wasm`;
   if (!existsSync(js) || !existsSync(wasm)) {
-    throw new Error(`no vp9.js and vp9.wasm in ${OUT_DIR}: run ./build.sh, or set VP9_WASM_DIR`);
+    throw new Error(`no vp9.js and vp9_bg.wasm in ${OUT_DIR}: run ./build.sh, or set VP9_WASM_DIR`);
   }
   const glue = (await import(js)) as Glue;
   const bytes = new Uint8Array(await Bun.file(wasm).arrayBuffer());
