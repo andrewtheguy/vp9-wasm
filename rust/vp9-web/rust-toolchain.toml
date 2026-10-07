@@ -3,7 +3,7 @@
 # one links, but its locks are single-thread stubs. The pin is this crate's
 # alone: the decoder itself builds on stable. A dated nightly, the one remotex's
 # own module is built with, so a release's archive is the same wherever it is
-# built; the release workflow installs the same date.
+# built. rustup installs it from this file on the first build.
 [toolchain]
 channel = "nightly-2026-09-29"
 components = ["rust-src"]
