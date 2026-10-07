@@ -1,0 +1,27 @@
+# The fuzz target over the decoder, run with cargo-fuzz on the nightly: see
+# the README. A workspace of its own, since it builds with the sanitizer.
+[workspace]
+
+[package]
+name = "vp9-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+vp9 = { path = "..", features = ["threads"] }
+rayon = "1"
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
