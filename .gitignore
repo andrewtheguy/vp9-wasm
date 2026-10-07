@@ -1,0 +1,13 @@
+# Build outputs
+build/
+dist/
+target/
+target-*/
+pkg/
+pkg-*/
+node_modules/
+# Temporary files, logs, profiles, benchmark data: everything under tmp/
+tmp/
+*.log
+perf.data*
+jit-*.dump
