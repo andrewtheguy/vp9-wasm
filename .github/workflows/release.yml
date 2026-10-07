@@ -1,0 +1,72 @@
+name: Release vp9-wasm
+
+# The module, built and tested on a fresh runner and attached to a release of
+# this repository: the archive remotex's frontend build takes, and its
+# SHA256SUMS, whose digest is what remotex pins.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine and validate version
+        id: version
+        run: |
+          # The module's crate is the one shipped, so its manifest names the release.
+          VERSION=$(cargo metadata --manifest-path rust/vp9-web/Cargo.toml --no-deps --offline --format-version 1 \
+            | jq -r '.packages[] | select(.name == "vp9-web") | .version')
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::vp9-web's version is not X.Y.Z: '$VERSION'"; exit 1; }
+          IS_PRERELEASE="false"
+          [ "$GITHUB_REF_NAME" = "main" ] || IS_PRERELEASE="true"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Abort if tag already exists
+        run: |
+          if git ls-remote --tags origin "refs/tags/${{ steps.version.outputs.tag }}" | grep -q .; then
+            echo "::error::Tag ${{ steps.version.outputs.tag }} already exists on remote. Bump the version in rust/vp9-web/Cargo.toml first."
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install the module's toolchain
+        run: cd rust/vp9-web && rustup toolchain install
+
+      - name: Test the decoder
+        run: cd rust && cargo test -p vp9 --lib
+
+      - name: Build the module
+        run: bun install --frozen-lockfile && ./build.sh
+
+      - name: Test the module
+        run: bun test
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          ARCHIVE="vp9-wasm-${TAG}.tar.gz"
+          cd dist
+          # A corruption check, not a tamper check: it lives on the same release
+          # as the file it covers.
+          sha256sum -- "$ARCHIVE" > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$TAG" \
+            --target "${{ github.sha }}" \
+            --title "$TAG" \
+            --generate-notes \
+            --notes "$(printf '%s\n\n    %s\n' \
+              "\`$ARCHIVE\` holds the module as remotex's build takes it: \`vp9.js\`, \`vp9_bg.wasm\` and \`vp9.d.ts\`. Its \`SHA256SUMS\` reads:" \
+              "$(cat SHA256SUMS)")" \
+            ${{ steps.version.outputs.is_prerelease == 'true' && '--prerelease' || '' }} \
+            SHA256SUMS "$ARCHIVE"

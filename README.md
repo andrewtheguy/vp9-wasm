@@ -84,11 +84,12 @@ run decode fuzz/artifacts/decode/<file>` replays it.
 ## Releasing
 
 Bump the version in `rust/vp9-web/Cargo.toml` (the module's crate: the archive
-and the tag take their number from it, through `cargo metadata` and `jq`),
-commit, push, and run `./publish.sh`, logged in to `gh` with an account that
-can write here. It builds `git archive HEAD` on this machine, tags the commit
-`vX.Y.Z`, and creates the release with the archive and its `SHA256SUMS`.
-remotex then takes it as a new version and checksum.
+and the tag take their number from it), commit, push, and run the
+`Release vp9-wasm` workflow (`.github/workflows/release.yml`) on that branch.
+It tests the decoder, builds the module, tests it, and creates the release
+`vX.Y.Z` at that commit with the archive and its `SHA256SUMS`; from a branch
+other than `main` it is a prerelease. remotex then takes it as a new version
+and checksum.
 
 ## The decoder
 
