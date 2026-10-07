@@ -51,6 +51,8 @@ pub struct Decoder {
     /// Each tile column's rows of coefficients, between their parsing and
     /// their reconstruction.
     rows: Vec<RowCell>,
+    /// A frame failed: nothing decodes until a keyframe.
+    broken: bool,
 }
 
 impl Decoder {
@@ -69,6 +71,7 @@ impl Decoder {
             above_nz: Default::default(),
             above_part: Vec::new(),
             rows: Vec::new(),
+            broken: false,
         }
     }
 
@@ -80,8 +83,13 @@ impl Decoder {
         for frame in superframe(data)? {
             // A frame of one byte or none is one the encoder dropped.
             if frame.len() > 1 {
-                if let Some(d) = self.frame(frame)? {
-                    shown = Some(d);
+                match self.frame(frame) {
+                    Ok(Some(d)) => shown = Some(d),
+                    Ok(None) => {}
+                    Err(e) => {
+                        self.broken = true;
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -100,6 +108,9 @@ impl Decoder {
 
     fn frame(&mut self, data: &[u8]) -> Result<Option<Decoded>> {
         let h = header::uncompressed(data, |slot| self.refs[slot].as_ref().map(|f| f.width as u32))?;
+        if self.broken && !h.keyframe {
+            return Err(Error::invalid("a frame that follows one that failed, and is not a keyframe"));
+        }
         if h.show_existing_frame.is_some() {
             return Err(Error::unsupported("a frame shown again"));
         }
@@ -178,6 +189,7 @@ impl Decoder {
         }
 
         // The frame has decoded: what it changes is kept.
+        self.broken = false;
         if let Some(c) = contexts {
             self.contexts = c;
         }

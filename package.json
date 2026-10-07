@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "bun test",
+    "fixtures": "bun test/generate-fixtures.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
