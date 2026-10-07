@@ -36,6 +36,7 @@ struct Last {
 }
 
 pub struct Decoder {
+    #[cfg_attr(not(feature = "threads"), allow(dead_code))]
     threads: usize,
     refs: [Option<Arc<Frame>>; 8],
     /// Every frame made, for its buffers to be used again once nothing else
@@ -340,7 +341,10 @@ impl Decoder {
         #[cfg(feature = "threads")]
         let threaded = self.threads > 1 && self.threads >= tile_cols;
         #[cfg(not(feature = "threads"))]
-        let threaded = false;
+        let threaded = {
+            let _ = &parse;
+            false
+        };
         if threaded {
             #[cfg(feature = "threads")]
             {

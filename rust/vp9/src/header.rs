@@ -169,7 +169,6 @@ pub fn uncompressed(data: &[u8], ref_width: impl Fn(usize) -> Option<u32>) -> Re
     h.keyframe = !r.flag()?;
     h.show_frame = r.flag()?;
     h.error_resilient = r.flag()?;
-    let width;
     if h.keyframe {
         sync_code(&mut r)?;
         h.colour = Some(colour_444(&mut r, profile)?);
@@ -210,7 +209,7 @@ pub fn uncompressed(data: &[u8], ref_width: impl Fn(usize) -> Option<u32>) -> Re
             h.interp_filter = if r.flag()? { SWITCHABLE } else { [1, 0, 2, 3][r.literal(2)? as usize] };
         }
     }
-    width = match h.size {
+    let width = match h.size {
         Size::Coded(w, _) => w,
         Size::OfRef(i) => ref_width(h.ref_slots[i]).ok_or_else(|| Error::invalid("a frame takes its size from a reference the decoder does not have"))?,
     };
@@ -333,10 +332,8 @@ pub fn compressed(data: &[u8], h: &FrameHeader, p: &mut Probs) -> Result<Compres
         }
         // A second reference is allowed where the references' sign biases
         // differ: only then is the choice coded.
-        if h.sign_bias[2] != h.sign_bias[1] || h.sign_bias[3] != h.sign_bias[1] {
-            if r.bit() {
-                return Err(Error::unsupported("compound prediction"));
-            }
+        if (h.sign_bias[2] != h.sign_bias[1] || h.sign_bias[3] != h.sign_bias[1]) && r.bit() {
+            return Err(Error::unsupported("compound prediction"));
         }
         for q in p.single_ref.as_flattened_mut() {
             diff_update(&mut r, q);

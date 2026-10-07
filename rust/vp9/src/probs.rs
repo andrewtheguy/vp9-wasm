@@ -93,13 +93,17 @@ pub struct MvCompCounts {
 
 /// libvpx's FRAME_COUNTS: what a frame's symbols were, for the next frame's
 /// probabilities.
+/// One transform size's token counts: by plane type, reference, band and
+/// context.
+pub type CoefCounts = [[[[[u32; 4]; 6]; 6]; 2]; 2];
+
 #[derive(Clone, Default)]
 pub struct Counts {
     pub y_mode: [[u32; 10]; 4],
     pub uv_mode: [[u32; 10]; 10],
     pub partition: [[u32; 4]; 16],
     /// Per token class: zero, one, two or more, end of block.
-    pub coef: [[[[[[u32; 4]; 6]; 6]; 2]; 2]; 4],
+    pub coef: [CoefCounts; 4],
     pub eob_branch: [[[[[u32; 6]; 6]; 2]; 2]; 4],
     pub interp_filter: [[u32; 3]; 4],
     pub inter_mode: [[u32; 4]; 7],
