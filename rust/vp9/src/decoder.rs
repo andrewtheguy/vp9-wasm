@@ -10,7 +10,11 @@ use crate::header::{self, FrameHeader, Size, SWITCHABLE, TX_MODE_SELECT};
 use crate::lf::{Filtered, LoopFilter};
 use crate::probs::{Counts, Probs};
 use crate::tables::{AC_QLOOKUP, DC_QLOOKUP};
-use crate::tile::{FrameCtx, Tile};
+use crate::recon::Recon;
+use crate::tile::{FrameCtx, RowCell, Tile};
+use crate::wavefront::Progress;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The most samples a frame may have: 8192×4320.
 const MAX_SAMPLES: usize = 8192 * 4320;
@@ -44,11 +48,14 @@ pub struct Decoder {
     prev: Option<Arc<Frame>>,
     above_nz: [Vec<u8>; 3],
     above_part: Vec<u8>,
+    /// Each tile column's rows of coefficients, between their parsing and
+    /// their reconstruction.
+    rows: Vec<RowCell>,
 }
 
 impl Decoder {
-    /// A decoder whose frames' tiles decode, and rows filter, on `threads` of
-    /// rayon's pool; on the caller for one.
+    /// A decoder whose frames decode on `threads` of rayon's pool; on the
+    /// caller for one.
     pub fn new(threads: usize) -> Decoder {
         Decoder {
             threads: threads.max(1),
@@ -61,6 +68,7 @@ impl Decoder {
             prev: None,
             above_nz: Default::default(),
             above_part: Vec::new(),
+            rows: Vec::new(),
         }
     }
 
@@ -157,13 +165,8 @@ impl Decoder {
         } else if let Some(r) = &refs_held[0] {
             frame.colour = r.colour;
         }
-        let counts = self.decode_tiles(&h, tx_mode, &probs, tiles, &mut frame, &refs_held, prev.as_deref())?;
-
-        if h.lf_level != 0 {
-            let lf = LoopFilter::new(&h, ref_deltas, mode_deltas);
-            let f = Filtered { planes: std::array::from_fn(|p| frame.planes[p].data.as_mut_ptr()), stride: frame.planes[0].stride, mi: frame.mi.as_ptr(), mi_cols: frame.mi_cols, mi_rows: frame.mi_rows };
-            crate::lf::filter_frame(&lf, &f, self.threads);
-        }
+        let lf = (h.lf_level != 0).then(|| LoopFilter::new(&h, ref_deltas, mode_deltas));
+        let counts = self.decode_rows(&h, tx_mode, &probs, tiles, &mut frame, &refs_held, prev.as_deref(), lf.as_ref())?;
 
         if !h.error_resilient && !h.frame_parallel {
             let mut adapted = probs.clone();
@@ -194,7 +197,10 @@ impl Decoder {
         Ok(h.show_frame.then_some(Decoded { frame, keyframe: h.keyframe }))
     }
 
-    fn decode_tiles(&mut self, h: &FrameHeader, tx_mode: u8, probs: &Probs, mut data: &[u8], frame: &mut Frame, refs: &[Option<Arc<Frame>>; 3], prev: Option<&Frame>) -> Result<Box<Counts>> {
+    /// The frame's samples: its tiles parsed, and its rows of 64×64 blocks
+    /// reconstructed and then filtered, each stage as far behind the one
+    /// before as what it reads requires.
+    fn decode_rows(&mut self, h: &FrameHeader, tx_mode: u8, probs: &Probs, mut data: &[u8], frame: &mut Frame, refs: &[Option<Arc<Frame>>; 3], prev: Option<&Frame>, lf: Option<&LoopFilter>) -> Result<Box<Counts>> {
         let (mi_cols, mi_rows) = (frame.mi_cols, frame.mi_rows);
         let sb_cols = mi_cols.div_ceil(8);
         let sb_rows = mi_rows.div_ceil(8);
@@ -204,6 +210,31 @@ impl Decoder {
         }
         self.above_part.clear();
         self.above_part.resize(sb_cols * 8, 0);
+
+        let (tile_cols, tile_rows) = (1usize << h.log2_tile_cols, 1usize << h.log2_tile_rows);
+        let offset = |idx: usize, sbs: usize, log2: u32, mis: usize| (((idx * sbs) >> log2) << 3).min(mis);
+        // Each tile but the last comes after its size.
+        let mut tile_data = vec![Vec::with_capacity(tile_rows); tile_cols];
+        for tile_row in 0..tile_rows {
+            for (tile_col, of_col) in tile_data.iter_mut().enumerate() {
+                let size = if tile_row == tile_rows - 1 && tile_col == tile_cols - 1 {
+                    data.len()
+                } else {
+                    let (size, rest) = data.split_first_chunk::<4>().ok_or_else(|| Error::invalid("a tile's size is cut short"))?;
+                    data = rest;
+                    u32::from_be_bytes(*size) as usize
+                };
+                if size > data.len() {
+                    return Err(Error::invalid("a tile is cut short"));
+                }
+                let (tile, rest) = data.split_at(size);
+                data = rest;
+                of_col.push((offset(tile_row, sb_rows, h.log2_tile_rows, mi_rows), tile));
+            }
+        }
+        if self.rows.len() < tile_cols * sb_rows {
+            self.rows.resize_with(tile_cols * sb_rows, || RowCell(Default::default()));
+        }
 
         let q = h.base_qindex as i32;
         let dc = |delta: i32| DC_QLOOKUP[(q + delta).clamp(0, 255) as usize];
@@ -224,33 +255,147 @@ impl Decoder {
             above_nz: std::array::from_fn(|p| self.above_nz[p].as_mut_ptr()),
             above_part: self.above_part.as_mut_ptr(),
             dequant: [[dc(h.y_dc_delta), ac(0)], [dc(h.uv_dc_delta), ac(h.uv_ac_delta)]],
+            tile_starts: (0..=tile_cols).map(|i| offset(i, sb_cols, h.log2_tile_cols, mi_cols)).collect(),
+            rows: &self.rows,
+            sb_rows,
+        };
+        let filtered = Filtered { planes: f.cur, stride: f.stride, mi: f.mi, mi_cols, mi_rows };
+        let mut tiles: Vec<Tile> = tile_data.into_iter().enumerate().map(|(i, data)| Tile::new(&f, i, data)).collect();
+
+        // A tile's rows parsed, and each row's blocks reconstructed and
+        // filtered.
+        let parsed: Vec<Progress> = (0..tile_cols).map(|_| Progress::default()).collect();
+        let made: Vec<Progress> = (0..sb_rows).map(|_| Progress::default()).collect();
+        let smooth: Vec<Progress> = (0..sb_rows).map(|_| Progress::default()).collect();
+        let first = Mutex::new(None::<Error>);
+        let stop = AtomicBool::new(false);
+
+        let parse = |tile: &mut Tile, i: usize| {
+            for row in 0..sb_rows {
+                if !stop.load(Ordering::Relaxed) {
+                    match tile.parse_row(row) {
+                        Ok(()) => {
+                            parsed[i].advance(row + 1);
+                            continue;
+                        }
+                        Err(e) => {
+                            stop.store(true, Ordering::Relaxed);
+                            first.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert(e);
+                        }
+                    }
+                }
+                return parsed[i].fail();
+            }
+        };
+        // A row is made a block behind the row above it, whose samples its
+        // intra blocks predict from.
+        let make = |recon: &mut Recon, row: usize| {
+            for tile in 0..tile_cols {
+                if !parsed[tile].wait_for(row + 1) {
+                    return made[row].fail();
+                }
+                recon.start(tile, row);
+                for col in f.tile_starts[tile] / 8..f.tile_starts[tile + 1].div_ceil(8) {
+                    if row > 0 && !made[row - 1].wait_for(col + 1) {
+                        return made[row].fail();
+                    }
+                    // SAFETY: the row is parsed, the block above is made, and
+                    // this thread alone has the row.
+                    unsafe { recon.superblock(row * 8, col * 8, f.tile_starts[tile]) };
+                    made[row].advance(col + 1);
+                }
+            }
+        };
+        // A block is filtered once nothing is still to be predicted from its
+        // samples, to its right and below, and once the blocks whose filtering
+        // comes before its own in raster order and shares samples with it are
+        // done: the one above and to the right.
+        let filter = |lf: &LoopFilter, row: usize| {
+            for col in 0..sb_cols {
+                let ahead = (col + 2).min(sb_cols);
+                if !made[row].wait_for(ahead) || (row + 1 < sb_rows && !made[row + 1].wait_for(ahead)) || (row > 0 && !smooth[row - 1].wait_for(ahead)) {
+                    return smooth[row].fail();
+                }
+                // SAFETY: the waits above are what the block's filtering
+                // requires, and this thread alone has the row.
+                unsafe { lf.filter_sb(&filtered, row * 8, col * 8) };
+                smooth[row].advance(col + 1);
+            }
         };
 
-        let (tile_cols, tile_rows) = (1usize << h.log2_tile_cols, 1usize << h.log2_tile_rows);
-        let offset = |idx: usize, sbs: usize, log2: u32, mis: usize| (((idx * sbs) >> log2) << 3).min(mis);
-        let mut counts = Box::<Counts>::default();
-        for tile_row in 0..tile_rows {
-            let mut tiles = Vec::with_capacity(tile_cols);
-            for tile_col in 0..tile_cols {
-                let size = if tile_row == tile_rows - 1 && tile_col == tile_cols - 1 {
-                    data.len()
-                } else {
-                    let (size, rest) = data.split_first_chunk::<4>().ok_or_else(|| Error::invalid("a tile's size is cut short"))?;
-                    data = rest;
-                    u32::from_be_bytes(*size) as usize
+        // The pool's threads parse a tile each, then join those making and
+        // filtering rows, which each take the next row that is ready soonest.
+        #[cfg(feature = "threads")]
+        let threaded = self.threads > 1 && self.threads >= tile_cols;
+        #[cfg(not(feature = "threads"))]
+        let threaded = false;
+        if threaded {
+            #[cfg(feature = "threads")]
+            {
+                use std::sync::atomic::AtomicUsize;
+                let next_make = AtomicUsize::new(0);
+                let next_filter = AtomicUsize::new(if lf.is_some() { 0 } else { sb_rows });
+                let rows = || {
+                    let mut recon = Recon::new(&f);
+                    loop {
+                        let (m, s) = (next_make.load(Ordering::Relaxed), next_filter.load(Ordering::Relaxed));
+                        if s < sb_rows && (m >= sb_rows || s + 2 <= m) {
+                            if next_filter.compare_exchange(s, s + 1, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+                                filter(lf.expect("rows to filter"), s);
+                            }
+                        } else if m < sb_rows {
+                            if next_make.compare_exchange(m, m + 1, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+                                make(&mut recon, m);
+                            }
+                        } else {
+                            break;
+                        }
+                    }
                 };
-                if size > data.len() {
-                    return Err(Error::invalid("a tile is cut short"));
+                let (parse, rows) = (&parse, &rows);
+                let extra = self.threads - tile_cols;
+                rayon::scope(|s| {
+                    for (i, tile) in tiles.iter_mut().enumerate() {
+                        s.spawn(move |_| {
+                            parse(tile, i);
+                            rows();
+                        });
+                    }
+                    for _ in 0..extra {
+                        s.spawn(move |_| rows());
+                    }
+                });
+            }
+        } else {
+            // On the caller: a row parsed, then made, then the row above it
+            // filtered.
+            let mut recon = Recon::new(&f);
+            'rows: for row in 0..sb_rows {
+                for (i, tile) in tiles.iter_mut().enumerate() {
+                    if let Err(e) = tile.parse_row(row) {
+                        first.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert(e);
+                        break 'rows;
+                    }
+                    parsed[i].advance(row + 1);
                 }
-                let (tile, rest) = data.split_at(size);
-                data = rest;
-                tiles.push(Tile::new(&f, tile, offset(tile_col, sb_cols, h.log2_tile_cols, mi_cols), offset(tile_col + 1, sb_cols, h.log2_tile_cols, mi_cols))?);
+                make(&mut recon, row);
+                if let Some(lf) = lf {
+                    if row > 0 {
+                        filter(lf, row - 1);
+                    }
+                    if row + 1 == sb_rows {
+                        filter(lf, row);
+                    }
+                }
             }
-            let (row_start, row_end) = (offset(tile_row, sb_rows, h.log2_tile_rows, mi_rows), offset(tile_row + 1, sb_rows, h.log2_tile_rows, mi_rows));
-            crate::threads::each(&mut tiles, self.threads, |tile| tile.decode(row_start, row_end))?;
-            for tile in &tiles {
-                counts.add(&tile.counts);
-            }
+        }
+        if let Some(e) = first.into_inner().unwrap_or_else(|e| e.into_inner()) {
+            return Err(e);
+        }
+
+        let mut counts = Box::<Counts>::default();
+        for tile in &tiles {
+            counts.add(&tile.counts);
         }
         Ok(counts)
     }

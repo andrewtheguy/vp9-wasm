@@ -261,10 +261,6 @@ pub static DEFAULT_INTER_MODE_PROBS: [[u8; 3]; 7] = [[2, 173, 34], [7, 145, 85],
 
 pub static DEFAULT_INTRA_INTER_PROBS: [u8; 4] = [9, 102, 187, 225];
 
-pub static DEFAULT_COMP_INTER_PROBS: [u8; 5] = [239, 183, 119, 96, 41];
-
-pub static DEFAULT_COMP_REF_PROBS: [u8; 5] = [50, 126, 123, 221, 226];
-
 pub static DEFAULT_SINGLE_REF_PROBS: [[u8; 2]; 5] = [[33, 16], [77, 74], [142, 142], [172, 170], [238, 247]];
 
 pub static DEFAULT_SKIP_PROBS: [u8; 3] = [192, 128, 64];

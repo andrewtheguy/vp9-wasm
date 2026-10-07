@@ -185,13 +185,3 @@ impl LoopFilter {
         }
     }
 }
-
-/// Filters the whole frame, its 64×64 blocks in raster order.
-pub(crate) fn filter_frame(lf: &LoopFilter, f: &Filtered, _threads: usize) {
-    for mi_row in (0..f.mi_rows).step_by(8) {
-        for mi_col in (0..f.mi_cols).step_by(8) {
-            // SAFETY: one block at a time.
-            unsafe { lf.filter_sb(f, mi_row, mi_col) };
-        }
-    }
-}

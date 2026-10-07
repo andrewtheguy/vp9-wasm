@@ -3,8 +3,9 @@
 //! from one of them. It refuses every other shape of stream by name.
 //!
 //! Each frame decodes to three planes of bytes, with the size to show and the
-//! colour the stream states. A frame's tiles decode in parallel on rayon's
-//! pool when the decoder is made with threads.
+//! colour the stream states. When the decoder is made with threads, a frame's
+//! tiles are parsed side by side on rayon's pool while its rows of blocks are
+//! reconstructed and filtered behind them.
 
 mod bits;
 mod convolve;
@@ -17,9 +18,10 @@ mod itx;
 mod lf;
 mod loopfilter;
 mod probs;
+mod recon;
 mod tables;
-mod threads;
 mod tile;
+mod wavefront;
 
 pub use decoder::{Decoded, Decoder};
 pub use error::{Error, Result};

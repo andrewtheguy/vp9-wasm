@@ -74,6 +74,11 @@ impl<'a> BoolDecoder<'a> {
         Ok(d)
     }
 
+    /// A decoder of nothing, to stand where one will be.
+    pub fn empty() -> Self {
+        BoolDecoder { data: &[], pos: 0, value: 0, count: 0, range: 255 }
+    }
+
     #[inline]
     fn fill(&mut self) {
         let mut shift = 64 - 8 - (self.count + 8);

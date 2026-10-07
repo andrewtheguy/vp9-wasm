@@ -1,21 +1,39 @@
-//! One tile: its partitions, each block's mode and motion vectors, its
-//! coefficients, and the block's prediction and reconstruction. Transcribed
-//! from libvpx 1.16.0's vp9_decodeframe.c, vp9_decodemv.c, vp9_detokenize.c,
-//! vp9_mvref_common.c, vp9_pred_common.c and vp9_reconintra.c, for 4:4:4 and
-//! single references.
+//! Parsing a tile: its partitions, each block's mode and motion vectors, and
+//! its coefficients, which are left with the modes for `recon` to make the
+//! samples of. Transcribed from libvpx 1.16.0's vp9_decodeframe.c,
+//! vp9_decodemv.c, vp9_detokenize.c, vp9_mvref_common.c and vp9_pred_common.c,
+//! for 4:4:4 and single references.
 
 use crate::bits::BoolDecoder;
 use crate::error::{Error, Result};
 use crate::frame::*;
 use crate::header::{FrameHeader, SWITCHABLE, TX_MODE_SELECT};
-use crate::intra::Pred;
 use crate::probs::*;
 use crate::tables::*;
-use crate::{convolve, intra, itx};
+use std::cell::UnsafeCell;
 
-/// Everything of a frame its tiles read or write. Tiles are columns of whole
-/// 64×64 blocks, and each writes only its own columns of the planes, the mode
-/// grid and the contexts above, so tiles of one row may decode side by side.
+/// The coefficients of one tile's row of 64×64 blocks, in the order its
+/// transform blocks are coded: parsed into, then reconstructed from.
+#[derive(Default)]
+pub(crate) struct RowBuf {
+    /// Per transform block of a block that is not skipped, how many
+    /// coefficients it has in scan order.
+    pub eobs: Vec<u16>,
+    /// Per transform block that has any: its one coefficient, or all of its
+    /// block's when it has more.
+    pub coeffs: Vec<i16>,
+}
+
+pub(crate) struct RowCell(pub UnsafeCell<RowBuf>);
+
+// SAFETY: a row is written by the thread that parses it and read only once
+// that thread has said it is done.
+unsafe impl Sync for RowCell {}
+
+/// Everything of a frame its threads read or write. Tiles are columns of
+/// whole 64×64 blocks, and each parses only its own columns of the mode grid
+/// and the contexts above, so tiles parse side by side; a row of blocks is
+/// reconstructed once it is parsed and the row above it is a block ahead.
 pub(crate) struct FrameCtx<'a> {
     pub h: &'a FrameHeader,
     pub tx_mode: u8,
@@ -37,17 +55,20 @@ pub(crate) struct FrameCtx<'a> {
     pub above_part: *mut u8,
     /// [luma, chroma][DC, AC]
     pub dequant: [[i16; 2]; 2],
+    /// Where each tile column starts, in 8×8 units, and the frame's width
+    /// after the last.
+    pub tile_starts: Vec<usize>,
+    /// Per tile column, its rows of 64×64 blocks.
+    pub rows: &'a [RowCell],
+    pub sb_rows: usize,
 }
 
 // SAFETY: the pointers are to buffers that outlive the frame's decoding, and
 // tiles touch disjoint columns of them.
 unsafe impl Sync for FrameCtx<'_> {}
 
-const INTRA_TX_TYPE: [u8; 10] = [0, 1, 2, 0, 3, 1, 2, 2, 1, 3];
-const NEED_LEFT: u8 = 2;
-const NEED_ABOVE: u8 = 4;
-const NEED_ABOVERIGHT: u8 = 8;
-const EXTEND: [u8; 10] = [NEED_ABOVE | NEED_LEFT, NEED_ABOVE, NEED_LEFT, NEED_ABOVERIGHT, NEED_LEFT | NEED_ABOVE, NEED_LEFT | NEED_ABOVE, NEED_LEFT | NEED_ABOVE, NEED_LEFT, NEED_ABOVERIGHT, NEED_LEFT | NEED_ABOVE];
+/// The transform an intra mode's residual is coded with.
+pub(crate) const INTRA_TX_TYPE: [u8; 10] = [0, 1, 2, 0, 3, 1, 2, 2, 1, 3];
 
 type Scan = (&'static [u16], &'static [u16]);
 /// [transform size][transform type]: the scan and each position's two
@@ -94,20 +115,23 @@ const CAT4: [u8; 4] = [176, 155, 140, 135];
 const CAT5: [u8; 5] = [180, 157, 141, 134, 130];
 const CAT6: [u8; 14] = [254, 254, 254, 252, 249, 243, 230, 196, 177, 153, 140, 133, 130, 129];
 
-#[repr(align(32))]
-struct Coeffs([i16; 1024]);
-
+/// One tile column's parser, over the tile of each tile row in turn.
 pub(crate) struct Tile<'a> {
     f: &'a FrameCtx<'a>,
+    /// The column's tiles, one per tile row, and the row each starts at.
+    data: Vec<(usize, &'a [u8])>,
     r: BoolDecoder<'a>,
+    started: bool,
     pub counts: Box<Counts>,
+    index: usize,
     col_start: usize,
     col_end: usize,
     left_nz: [[u8; 16]; 3],
     left_part: [u8; 8],
-    coeffs: Box<Coeffs>,
-    /// A reference block with the frame's edge repeated around it.
-    mc: Box<[u8; 80 * 80]>,
+    /// Each coefficient's size class, for the context of those after it.
+    token_cache: Box<[u8; 1024]>,
+    /// The row being parsed.
+    buf: *mut RowBuf,
 
     // The block being decoded.
     mi_row: usize,
@@ -125,6 +149,9 @@ pub(crate) struct Tile<'a> {
     sub_wl: u8,
     sub_hl: u8,
 }
+
+// SAFETY: the row a tile points at is its own until it says it is parsed.
+unsafe impl Send for Tile<'_> {}
 
 #[inline]
 fn clamp_mv(mv: Mv, min_col: i32, max_col: i32, min_row: i32, max_row: i32) -> Mv {
@@ -149,17 +176,22 @@ fn lower_precision(mv: &mut Mv, allow_hp: bool) {
 }
 
 impl<'a> Tile<'a> {
-    pub fn new(f: &'a FrameCtx<'a>, data: &'a [u8], col_start: usize, col_end: usize) -> Result<Self> {
-        Ok(Tile {
+    /// The parser of tile column `index`, whose tile of each tile row is in
+    /// `data` with the row it starts at.
+    pub fn new(f: &'a FrameCtx<'a>, index: usize, data: Vec<(usize, &'a [u8])>) -> Self {
+        Tile {
             f,
-            r: BoolDecoder::new(data)?,
+            data,
+            r: BoolDecoder::empty(),
+            started: false,
             counts: Box::default(),
-            col_start,
-            col_end,
+            index,
+            col_start: f.tile_starts[index],
+            col_end: f.tile_starts[index + 1],
             left_nz: [[0; 16]; 3],
             left_part: [0; 8],
-            coeffs: Box::new(Coeffs([0; 1024])),
-            mc: Box::new([0; 80 * 80]),
+            token_cache: Box::new([0; 1024]),
+            buf: std::ptr::null_mut(),
             mi_row: 0,
             mi_col: 0,
             have_above: false,
@@ -172,21 +204,35 @@ impl<'a> Tile<'a> {
             to_bottom: 0,
             sub_wl: 0,
             sub_hl: 0,
-        })
+        }
     }
 
-    /// The tile's rows of 64×64 blocks from `row_start` to `row_end`, in 8×8
-    /// units.
-    pub fn decode(&mut self, row_start: usize, row_end: usize) -> Result<()> {
-        for mi_row in (row_start..row_end).step_by(8) {
-            self.left_nz = [[0; 16]; 3];
-            self.left_part = [0; 8];
-            for mi_col in (self.col_start..self.col_end).step_by(8) {
-                self.partition(mi_row, mi_col, 4)?;
-            }
+    fn overran(&self) -> Result<()> {
+        if self.started && self.r.overran() { Err(Error::invalid("a tile is cut short")) } else { Ok(()) }
+    }
+
+    /// Parses the tile's row of 64×64 blocks `sb_row`, the rows before it
+    /// having been parsed.
+    pub fn parse_row(&mut self, sb_row: usize) -> Result<()> {
+        let mi_row = sb_row * 8;
+        if let Some(&(_, data)) = self.data.iter().find(|(start, _)| *start == mi_row) {
+            self.overran()?;
+            self.r = BoolDecoder::new(data)?;
+            self.started = true;
         }
-        if self.r.overran() {
-            return Err(Error::invalid("a tile is cut short"));
+        self.buf = self.f.rows[self.index * self.f.sb_rows + sb_row].0.get();
+        // SAFETY: this thread alone has the row until it says it is parsed.
+        unsafe {
+            (*self.buf).eobs.clear();
+            (*self.buf).coeffs.clear();
+        }
+        self.left_nz = [[0; 16]; 3];
+        self.left_part = [0; 8];
+        for mi_col in (self.col_start..self.col_end).step_by(8) {
+            self.partition(mi_row, mi_col, 4)?;
+        }
+        if sb_row + 1 == self.f.sb_rows {
+            self.overran()?;
         }
         Ok(())
     }
@@ -301,63 +347,36 @@ impl<'a> Tile<'a> {
                 unsafe { std::slice::from_raw_parts_mut(f.above_nz[plane].add(x), n4_w) }.fill(0);
                 self.left_nz[plane][y..y + n4_h].fill(0);
             }
-        }
-
-        // The 4×4s of the block inside the frame, across and down.
-        let max_w = if self.to_right >= 0 { n4_w } else { (n4_w as i32 + (self.to_right >> 5)) as usize };
-        let max_h = if self.to_bottom >= 0 { n4_h } else { (n4_h as i32 + (self.to_bottom >> 5)) as usize };
-        // Where the contexts stop being written: 0 for a block inside.
-        let edge_w = if self.to_right >= 0 { 0 } else { max_w };
-        let edge_h = if self.to_bottom >= 0 { 0 } else { max_h };
-        let lossless = f.h.lossless;
-
-        if !mi.is_inter() {
+        } else {
+            // The 4×4s of the block inside the frame, across and down.
+            let max_w = if self.to_right >= 0 { n4_w } else { (n4_w as i32 + (self.to_right >> 5)) as usize };
+            let max_h = if self.to_bottom >= 0 { n4_h } else { (n4_h as i32 + (self.to_bottom >> 5)) as usize };
+            // Where the contexts stop being written: 0 for a block inside.
+            let edge_w = if self.to_right >= 0 { 0 } else { max_w };
+            let edge_h = if self.to_bottom >= 0 { 0 } else { max_h };
+            let inter = mi.is_inter();
+            let tx = mi.tx_size as usize;
+            // SAFETY: this thread alone has the row until it says it is parsed.
+            let first = unsafe { (*self.buf).eobs.len() };
+            let mut eobtotal = 0;
             for plane in 0..3 {
-                let tx = mi.tx_size as usize;
-                let step = 1 << tx;
-                for row in (0..max_h).step_by(step) {
-                    for col in (0..max_w).step_by(step) {
-                        let mode = if plane != 0 {
-                            mi.uv_mode
-                        } else if bsize < BLOCK_8X8 {
-                            mi.sub_mode[(row << 1) + col]
+                for row in (0..max_h).step_by(1 << tx) {
+                    for col in (0..max_w).step_by(1 << tx) {
+                        let tx_type = if inter || plane != 0 || f.h.lossless {
+                            0
                         } else {
-                            mi.mode
+                            INTRA_TX_TYPE[if bsize < BLOCK_8X8 { mi.sub_mode[(row << 1) + col] } else { mi.mode } as usize] as usize
                         };
-                        let dst = self.dst(plane, col, row);
-                        self.predict_intra(dst, tx, mode, bwl, col, row);
-                        if !mi.skip {
-                            let tx_type = if plane != 0 || lossless { 0 } else { INTRA_TX_TYPE[mode as usize] as usize };
-                            let eob = self.tokens(plane, col, row, tx, tx_type, false, edge_w, edge_h);
-                            if eob > 0 {
-                                self.reconstruct(dst, tx, tx_type, eob);
-                            }
-                        }
+                        eobtotal += self.tokens(plane, col, row, tx, tx_type, inter, edge_w, edge_h);
                     }
                 }
             }
-        } else {
-            self.predict_inter(&mi, n4_w, n4_h);
-            if !mi.skip {
-                let mut eobtotal = 0;
-                for plane in 0..3 {
-                    let tx = mi.tx_size as usize;
-                    let step = 1 << tx;
-                    for row in (0..max_h).step_by(step) {
-                        for col in (0..max_w).step_by(step) {
-                            let eob = self.tokens(plane, col, row, tx, 0, true, edge_w, edge_h);
-                            if eob > 0 {
-                                let dst = self.dst(plane, col, row);
-                                self.reconstruct(dst, tx, 0, eob);
-                            }
-                            eobtotal += eob;
-                        }
-                    }
-                }
-                // What the loop filter and the blocks after this one see.
-                if bsize >= BLOCK_8X8 && eobtotal == 0 {
-                    mi.skip = true;
-                }
+            // What the loop filter and the blocks after this one see: an inter
+            // block with no coefficients is a skipped one.
+            if inter && bsize >= BLOCK_8X8 && eobtotal == 0 {
+                mi.skip = true;
+                // SAFETY: as above.
+                unsafe { (*self.buf).eobs.truncate(first) };
             }
         }
 
@@ -369,33 +388,6 @@ impl<'a> Tile<'a> {
             }
         }
         Ok(())
-    }
-
-    /// Where the transform block at (`col`, `row`) 4×4s into the block is, in
-    /// `plane`.
-    #[inline]
-    fn dst(&self, plane: usize, col: usize, row: usize) -> *mut u8 {
-        // SAFETY: the block starts inside the frame, whose planes are whole
-        // 64×64 blocks.
-        unsafe { self.f.cur[plane].add((self.mi_row * 8 + row * 4) * self.f.stride + self.mi_col * 8 + col * 4) }
-    }
-
-    fn reconstruct(&mut self, dst: *mut u8, tx: usize, tx_type: usize, eob: usize) {
-        let n = 4usize << tx;
-        let c = &mut self.coeffs.0;
-        // SAFETY: a transform block that starts inside the frame ends inside
-        // its planes.
-        unsafe { itx::inverse_add(tx, tx_type, self.f.h.lossless, &c[..n * n], eob, dst, self.f.stride) };
-        // Only where coefficients can have been, as libvpx clears them.
-        if eob == 1 {
-            c[0] = 0;
-        } else if tx_type == 0 && tx <= 2 && eob <= 10 {
-            c[..4 * n].fill(0);
-        } else if tx == 3 && eob <= 34 {
-            c[..256].fill(0);
-        } else {
-            c[..n * n].fill(0);
-        }
     }
 
     fn skip_flag(&mut self) -> bool {
@@ -602,6 +594,7 @@ impl<'a> Tile<'a> {
     /// from the blocks around, then the previous frame's block here, then the
     /// same again for the other references. `block` is the sub-block of a block
     /// under 8×8, or -1.
+    #[allow(unused_assignments)]
     fn find_mv_refs(&self, bsize: u8, ref_frame: u8, block: i32) -> [Mv; 2] {
         let f = self.f;
         let search = &MV_REF_BLOCKS[bsize as usize];
@@ -823,9 +816,9 @@ impl<'a> Tile<'a> {
         Ok(())
     }
 
-    /// One transform block's coefficients, dequantized into `self.coeffs`:
-    /// how many there are in scan order. `edge_w` and `edge_h` are where the
-    /// frame ends inside the block, in 4×4s, or 0.
+    /// One transform block's coefficients, dequantized and left in the row's
+    /// buffer: how many there are in scan order. `edge_w` and `edge_h` are
+    /// where the frame ends inside the block, in 4×4s, or 0.
     fn tokens(&mut self, plane: usize, col: usize, row: usize, tx: usize, tx_type: usize, inter: bool, edge_w: usize, edge_h: usize) -> usize {
         let f = self.f;
         let n = 1usize << tx;
@@ -833,219 +826,37 @@ impl<'a> Tile<'a> {
         // whole 64×64 blocks, which the context above is as long as.
         let a = unsafe { std::slice::from_raw_parts_mut(f.above_nz[plane].add(self.mi_col * 2 + col), n) };
         let y = ((self.mi_row * 2) & 15) + row;
-        let l = &mut self.left_nz[plane][y..y + n];
-        let ctx = a.iter().any(|&v| v != 0) as usize + l.iter().any(|&v| v != 0) as usize;
+        let ctx = a.iter().any(|&v| v != 0) as usize + self.left_nz[plane][y..y + n].iter().any(|&v| v != 0) as usize;
 
         let (scan, nb) = SCANS[tx][tx_type];
         let dq = f.dequant[(plane != 0) as usize];
-        let eob = decode_coefs(&mut self.r, &f.probs.coef[tx][(plane != 0) as usize][inter as usize], &mut self.counts.coef[tx][(plane != 0) as usize][inter as usize], &mut self.counts.eob_branch[tx][(plane != 0) as usize][inter as usize], &mut self.coeffs.0, tx, dq, ctx, scan, nb);
+        let ty = (plane != 0) as usize;
+        // SAFETY: this thread alone has the row until it says it is parsed.
+        let buf = unsafe { &mut *self.buf };
+        let at = buf.coeffs.len();
+        buf.coeffs.resize(at + (16 << (tx << 1)), 0);
+        let eob = decode_coefs(&mut self.r, &f.probs.coef[tx][ty][inter as usize], &mut self.counts.coef[tx][ty][inter as usize], &mut self.counts.eob_branch[tx][ty][inter as usize], &mut buf.coeffs[at..], &mut self.token_cache, tx, dq, ctx, scan, nb);
+        // A block of one coefficient has it first, and keeps only that.
+        buf.coeffs.truncate(at + if eob > 1 { 16 << (tx << 1) } else { eob });
+        buf.eobs.push(eob as u16);
 
         let v = (eob > 0) as u8;
         for (i, a) in a.iter_mut().enumerate() {
             *a = if edge_w != 0 && col + i >= edge_w { 0 } else { v };
         }
-        for (i, l) in l.iter_mut().enumerate() {
+        for (i, l) in self.left_nz[plane][y..y + n].iter_mut().enumerate() {
             *l = if edge_h != 0 && row + i >= edge_h { 0 } else { v };
         }
         eob
-    }
-
-    /// The intra prediction of one transform block, from the samples above it
-    /// and to its left as libvpx's `vp9_predict_intra_block` gathers them.
-    fn predict_intra(&mut self, dst: *mut u8, tx: usize, mode: u8, bwl: u32, col: usize, row: usize) {
-        let f = self.f;
-        let stride = f.stride;
-        let bs = 4usize << tx;
-        let up = row != 0 || self.have_above;
-        let left = col != 0 || self.have_left;
-        let right = col + (1 << tx) < (1 << bwl);
-        let frame_width = f.mi_cols * 8;
-        let frame_height = f.mi_rows * 8;
-        let x0 = self.mi_col * 8 + col * 4;
-        let y0 = self.mi_row * 8 + row * 4;
-        let ext = EXTEND[mode as usize];
-
-        let mut left_col = [0u8; 32];
-        let mut above_data = [0u8; 64 + 16];
-        // SAFETY: the samples read are of this frame, above and to the left of
-        // a block that starts inside it, and no further right or down than the
-        // frame's size in whole 8×8s.
-        unsafe {
-            let above_row = above_data.as_mut_ptr().add(16);
-            let mut above: *const u8 = above_row;
-            let above_ref = dst.sub(stride) as *const u8;
-
-            if ext & NEED_LEFT != 0 {
-                if left {
-                    let have = if self.to_bottom < 0 && y0 + bs > frame_height { frame_height - y0 } else { bs };
-                    for i in 0..bs {
-                        left_col[i] = *dst.add(i.min(have - 1) * stride).sub(1);
-                    }
-                } else {
-                    left_col[..bs].fill(129);
-                }
-            }
-
-            if ext & NEED_ABOVE != 0 {
-                if up {
-                    if self.to_right < 0 {
-                        if x0 + bs <= frame_width {
-                            std::ptr::copy_nonoverlapping(above_ref, above_row, bs);
-                        } else if x0 <= frame_width {
-                            let r = frame_width - x0;
-                            std::ptr::copy_nonoverlapping(above_ref, above_row, r);
-                            std::ptr::write_bytes(above_row.add(r), *above_row.add(r - 1), x0 + bs - frame_width);
-                        }
-                    } else if bs == 4 && right && left {
-                        above = above_ref;
-                    } else {
-                        std::ptr::copy_nonoverlapping(above_ref, above_row, bs);
-                    }
-                    *above_row.sub(1) = if left { *above_ref.sub(1) } else { 129 };
-                } else {
-                    std::ptr::write_bytes(above_row.sub(1), 127, bs + 1);
-                }
-            }
-
-            if ext & NEED_ABOVERIGHT != 0 {
-                if up {
-                    if self.to_right < 0 {
-                        if x0 + 2 * bs <= frame_width {
-                            if right && bs == 4 {
-                                std::ptr::copy_nonoverlapping(above_ref, above_row, 2 * bs);
-                            } else {
-                                std::ptr::copy_nonoverlapping(above_ref, above_row, bs);
-                                std::ptr::write_bytes(above_row.add(bs), *above_row.add(bs - 1), bs);
-                            }
-                        } else if x0 + bs <= frame_width {
-                            let r = frame_width - x0;
-                            if right && bs == 4 {
-                                std::ptr::copy_nonoverlapping(above_ref, above_row, r);
-                                std::ptr::write_bytes(above_row.add(r), *above_row.add(r - 1), x0 + 2 * bs - frame_width);
-                            } else {
-                                std::ptr::copy_nonoverlapping(above_ref, above_row, bs);
-                                std::ptr::write_bytes(above_row.add(bs), *above_row.add(bs - 1), bs);
-                            }
-                        } else if x0 <= frame_width {
-                            let r = frame_width - x0;
-                            std::ptr::copy_nonoverlapping(above_ref, above_row, r);
-                            std::ptr::write_bytes(above_row.add(r), *above_row.add(r - 1), x0 + 2 * bs - frame_width);
-                        }
-                    } else if bs == 4 && right && left {
-                        above = above_ref;
-                    } else {
-                        std::ptr::copy_nonoverlapping(above_ref, above_row, bs);
-                        if bs == 4 && right {
-                            std::ptr::copy_nonoverlapping(above_ref.add(bs), above_row.add(bs), bs);
-                        } else {
-                            std::ptr::write_bytes(above_row.add(bs), *above_row.add(bs - 1), bs);
-                        }
-                    }
-                    *above_row.sub(1) = if left { *above_ref.sub(1) } else { 129 };
-                } else {
-                    std::ptr::write_bytes(above_row.sub(1), 127, bs * 2 + 1);
-                }
-            }
-
-            let pred = match (mode, left, up) {
-                (0, true, true) => Pred::Dc,
-                (0, true, false) => Pred::DcLeft,
-                (0, false, true) => Pred::DcTop,
-                (0, false, false) => Pred::Dc128,
-                (1, ..) => Pred::V,
-                (2, ..) => Pred::H,
-                (3, ..) => Pred::D45,
-                (4, ..) => Pred::D135,
-                (5, ..) => Pred::D117,
-                (6, ..) => Pred::D153,
-                (7, ..) => Pred::D207,
-                (8, ..) => Pred::D63,
-                _ => Pred::Tm,
-            };
-            intra::predict(pred, tx, dst, stride, above, left_col.as_ptr());
-        }
-    }
-
-    /// The block's prediction from its reference, in all three planes.
-    fn predict_inter(&mut self, mi: &ModeInfo, n4_w: usize, n4_h: usize) {
-        let refs = self.f.refs[mi.ref_frame as usize - 1];
-        let (x, y) = (self.mi_col * 8, self.mi_row * 8);
-        for plane in 0..3 {
-            if mi.sb_type < BLOCK_8X8 {
-                for i in 0..4 {
-                    self.predict_inter_block(refs[plane], plane, x + 4 * (i & 1), y + 4 * (i >> 1), 4, 4, mi.sub_mv[i], mi.interp_filter);
-                }
-            } else {
-                self.predict_inter_block(refs[plane], plane, x, y, 4 * n4_w, 4 * n4_h, mi.mv, mi.interp_filter);
-            }
-        }
-    }
-
-    /// `dec_build_inter_predictors`, for a reference of the frame's own size.
-    fn predict_inter_block(&mut self, reference: *const u8, plane: usize, x: usize, y: usize, w: usize, h: usize, mv: Mv, filter: u8) {
-        let f = self.f;
-        let stride = f.stride;
-        let (fw, fh) = (f.width as i32, f.height as i32);
-        // Sixteenths of a sample.
-        let (mv_col, mv_row) = (mv.col as i32 * 2, mv.row as i32 * 2);
-        let (subpel_x, subpel_y) = ((mv_col & 15) as usize, (mv_row & 15) as usize);
-        let mut x0 = x as i32 + (mv_col >> 4);
-        let mut y0 = y as i32 + (mv_row >> 4);
-        // SAFETY: the destination is a block of this frame. The reference is
-        // read where the block lands in it, which is inside the frame or is
-        // gathered into `mc` with the frame's edges repeated; a block that
-        // does not move reads the reference's own block.
-        unsafe {
-            let dst = f.cur[plane].add(y * stride + x);
-            if mv_col != 0 || mv_row != 0 || (fw & 7) != 0 || (fh & 7) != 0 {
-                let (ox, oy) = (x0, y0);
-                let mut x1 = x0 + w as i32;
-                let mut y1 = y0 + h as i32;
-                let (mut x_pad, mut y_pad) = (0, 0);
-                if subpel_x != 0 {
-                    x0 -= 3;
-                    x1 += 4;
-                    x_pad = 1;
-                }
-                if subpel_y != 0 {
-                    y0 -= 3;
-                    y1 += 4;
-                    y_pad = 1;
-                }
-                if x0 < 0 || x0 > fw - 1 || x1 < 0 || x1 > fw - 1 || y0 < 0 || y0 > fh - 1 || y1 < 0 || y1 > fh - 1 {
-                    let b_w = (x1 - x0 + 1) as usize;
-                    let b_h = (y1 - y0 + 1) as usize;
-                    let left = (-x0).clamp(0, b_w as i32) as usize;
-                    let right = (x0 + b_w as i32 - fw).clamp(0, b_w as i32) as usize;
-                    let copy = b_w - left - right;
-                    for j in 0..b_h {
-                        let row = reference.add((y0 + j as i32).clamp(0, fh - 1) as usize * stride);
-                        let out = self.mc.as_mut_ptr().add(j * b_w);
-                        std::ptr::write_bytes(out, *row, left);
-                        if copy != 0 {
-                            std::ptr::copy_nonoverlapping(row.add((x0 + left as i32) as usize), out.add(left), copy);
-                        }
-                        std::ptr::write_bytes(out.add(left + copy), *row.add(fw as usize - 1), right);
-                    }
-                    let src = self.mc.as_ptr().add(y_pad * 3 * b_w + x_pad * 3);
-                    convolve::predict(src, b_w, dst, stride, filter as usize, subpel_x, subpel_y, w, h);
-                    return;
-                }
-                x0 = ox;
-                y0 = oy;
-            }
-            convolve::predict(reference.add(y0 as usize * stride + x0 as usize), stride, dst, stride, filter as usize, subpel_x, subpel_y, w, h);
-        }
     }
 }
 
 /// `decode_coefs`: one transform block's tokens.
 #[inline]
-fn decode_coefs(r: &mut BoolDecoder, probs: &[[[u8; 3]; 6]; 6], counts: &mut [[[u32; 4]; 6]; 6], eob_branch: &mut [[u32; 6]; 6], coeffs: &mut [i16; 1024], tx: usize, dq: [i16; 2], mut ctx: usize, scan: &[u16], nb: &[u16]) -> usize {
+fn decode_coefs(r: &mut BoolDecoder, probs: &[[[u8; 3]; 6]; 6], counts: &mut [[[u32; 4]; 6]; 6], eob_branch: &mut [[u32; 6]; 6], coeffs: &mut [i16], token_cache: &mut [u8; 1024], tx: usize, dq: [i16; 2], mut ctx: usize, scan: &[u16], nb: &[u16]) -> usize {
     let max_eob = 16usize << (tx << 1);
     let band_translate: &[u8] = if tx == 0 { &COEFBAND_4X4 } else { &COEFBAND_8X8PLUS };
     let dq_shift = (tx == 3) as u32;
-    let mut token_cache = [0u8; 1024];
     let mut dqv = dq[0] as i32;
     let mut c = 0;
     let context = |cache: &[u8; 1024], c: usize| (1 + cache[nb[2 * c] as usize & 1023] as usize + cache[nb[2 * c + 1] as usize & 1023] as usize) >> 1;
@@ -1067,7 +878,7 @@ fn decode_coefs(r: &mut BoolDecoder, probs: &[[[u8; 3]; 6]; 6], counts: &mut [[[
             if c >= max_eob {
                 return c;
             }
-            ctx = context(&token_cache, c);
+            ctx = context(token_cache, c);
             band = band_translate[c] as usize;
             prob = &probs[band][ctx];
         }
@@ -1105,7 +916,7 @@ fn decode_coefs(r: &mut BoolDecoder, probs: &[[[u8; 3]; 6]; 6], counts: &mut [[[
         };
         coeffs[pos] = (if r.bit() { -v } else { v }) as i16;
         c += 1;
-        ctx = context(&token_cache, c);
+        ctx = context(token_cache, c);
         dqv = dq[1] as i32;
     }
     c
