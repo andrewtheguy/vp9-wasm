@@ -1,0 +1,33 @@
+# The page's VP9 decoder: the `vp9` crate behind the few calls remotex's decode
+# worker makes, built to WebAssembly with threads and SIMD.
+#
+# Built by ../../build.sh with wasm-pack. Not a member of the
+# workspace above, which names it in `exclude`: it builds for
+# `wasm32-unknown-unknown` alone, with the profile, the lockfile and the toolchain
+# here. The toolchain is a nightly (rust-toolchain.toml), for the threads the
+# module decodes on (.cargo/config.toml).
+[package]
+name = "vp9-web"
+version = "0.0.1"
+license = "BSD-3-Clause"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+vp9 = { path = "../vp9", features = ["threads"] }
+rayon = "1"
+wasm-bindgen = "0.2"
+
+# For speed, not size: this decodes a desktop's every frame.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.wasm-pack.profile.release]
+# LLVM's output as it is, with the function names kept for `perf` under Node.
+wasm-opt = false
