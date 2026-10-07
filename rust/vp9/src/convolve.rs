@@ -4,8 +4,15 @@
 //! `vpx_dsp/vpx_convolve.c` at a step of one whole sample, and the kernels of
 //! `vp9/common/vp9_filter.c`.
 
-use core::mem::MaybeUninit;
 use core::ptr::copy_nonoverlapping;
+
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+use scalar::{both, horiz, vert};
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+use simd128::{both, horiz, vert};
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+mod simd128;
 
 /// The eight-tap kernels in libvpx's `INTERP_FILTER` order: 0 `EIGHTTAP`
 /// (regular), 1 `EIGHTTAP_SMOOTH`, 2 `EIGHTTAP_SHARP`, 3 `BILINEAR`;
@@ -94,17 +101,6 @@ const BEFORE: usize = 3;
 /// The rows the horizontal pass makes for the vertical one, past the block's.
 const EXTRA: usize = 7;
 
-/// One sample: eight taps a `step` apart starting at `p`, rounded to 7 bits
-/// and clipped.
-#[inline(always)]
-unsafe fn tap(p: *const u8, step: usize, f: &[i16; 8]) -> u8 {
-    let mut sum = 64;
-    for k in 0..8 {
-        sum += unsafe { *p.add(k * step) } as i32 * f[k] as i32;
-    }
-    (sum >> 7).clamp(0, 255) as u8
-}
-
 /// libvpx's `vpx_convolve_copy`.
 unsafe fn copy<const W: usize>(src: *const u8, src_stride: usize, dst: *mut u8, dst_stride: usize, h: usize) {
     for y in 0..h {
@@ -112,66 +108,87 @@ unsafe fn copy<const W: usize>(src: *const u8, src_stride: usize, dst: *mut u8, 
     }
 }
 
-/// libvpx's `vpx_convolve8_horiz`.
-unsafe fn horiz<const W: usize>(
-    src: *const u8,
-    src_stride: usize,
-    dst: *mut u8,
-    dst_stride: usize,
-    f: &[i16; 8],
-    h: usize,
-) {
-    unsafe {
-        let src = src.sub(BEFORE);
-        for y in 0..h {
-            let from = src.add(y * src_stride);
-            let mut row = [0u8; W];
-            for x in 0..W {
-                row[x] = tap(from.add(x), 1, f);
+/// The filters in plain Rust: the reference, and what every target but
+/// WebAssembly with SIMD runs.
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+mod scalar {
+    use core::mem::MaybeUninit;
+    use core::ptr::copy_nonoverlapping;
+
+    use super::{BEFORE, EXTRA};
+
+    /// One sample: eight taps a `step` apart starting at `p`, rounded to 7 bits
+    /// and clipped.
+    #[inline(always)]
+    unsafe fn tap(p: *const u8, step: usize, f: &[i16; 8]) -> u8 {
+        let mut sum = 64;
+        for k in 0..8 {
+            sum += unsafe { *p.add(k * step) } as i32 * f[k] as i32;
+        }
+        (sum >> 7).clamp(0, 255) as u8
+    }
+
+    /// libvpx's `vpx_convolve8_horiz`.
+    pub unsafe fn horiz<const W: usize>(
+        src: *const u8,
+        src_stride: usize,
+        dst: *mut u8,
+        dst_stride: usize,
+        f: &[i16; 8],
+        h: usize,
+    ) {
+        unsafe {
+            let src = src.sub(BEFORE);
+            for y in 0..h {
+                let from = src.add(y * src_stride);
+                let mut row = [0u8; W];
+                for x in 0..W {
+                    row[x] = tap(from.add(x), 1, f);
+                }
+                copy_nonoverlapping(row.as_ptr(), dst.add(y * dst_stride), W);
             }
-            copy_nonoverlapping(row.as_ptr(), dst.add(y * dst_stride), W);
         }
     }
-}
 
-/// libvpx's `vpx_convolve8_vert`.
-unsafe fn vert<const W: usize>(
-    src: *const u8,
-    src_stride: usize,
-    dst: *mut u8,
-    dst_stride: usize,
-    f: &[i16; 8],
-    h: usize,
-) {
-    unsafe {
-        let src = src.sub(BEFORE * src_stride);
-        for y in 0..h {
-            let from = src.add(y * src_stride);
-            let mut row = [0u8; W];
-            for x in 0..W {
-                row[x] = tap(from.add(x), src_stride, f);
+    /// libvpx's `vpx_convolve8_vert`.
+    pub unsafe fn vert<const W: usize>(
+        src: *const u8,
+        src_stride: usize,
+        dst: *mut u8,
+        dst_stride: usize,
+        f: &[i16; 8],
+        h: usize,
+    ) {
+        unsafe {
+            let src = src.sub(BEFORE * src_stride);
+            for y in 0..h {
+                let from = src.add(y * src_stride);
+                let mut row = [0u8; W];
+                for x in 0..W {
+                    row[x] = tap(from.add(x), src_stride, f);
+                }
+                copy_nonoverlapping(row.as_ptr(), dst.add(y * dst_stride), W);
             }
-            copy_nonoverlapping(row.as_ptr(), dst.add(y * dst_stride), W);
         }
     }
-}
 
-/// libvpx's `vpx_convolve8`: across into an intermediate of 8-bit samples,
-/// then down from it. `h` is at most 64.
-unsafe fn both<const W: usize>(
-    src: *const u8,
-    src_stride: usize,
-    dst: *mut u8,
-    dst_stride: usize,
-    fx: &[i16; 8],
-    fy: &[i16; 8],
-    h: usize,
-) {
-    let mut temp = [MaybeUninit::<u8>::uninit(); 64 * (64 + EXTRA)];
-    let temp = temp.as_mut_ptr() as *mut u8;
-    unsafe {
-        horiz::<W>(src.sub(BEFORE * src_stride), src_stride, temp, 64, fx, h + EXTRA);
-        vert::<W>(temp.add(BEFORE * 64), 64, dst, dst_stride, fy, h);
+    /// libvpx's `vpx_convolve8`: across into an intermediate of 8-bit samples,
+    /// then down from it. `h` is at most 64.
+    pub unsafe fn both<const W: usize>(
+        src: *const u8,
+        src_stride: usize,
+        dst: *mut u8,
+        dst_stride: usize,
+        fx: &[i16; 8],
+        fy: &[i16; 8],
+        h: usize,
+    ) {
+        let mut temp = [MaybeUninit::<u8>::uninit(); 64 * (64 + EXTRA)];
+        let temp = temp.as_mut_ptr() as *mut u8;
+        unsafe {
+            horiz::<W>(src.sub(BEFORE * src_stride), src_stride, temp, 64, fx, h + EXTRA);
+            vert::<W>(temp.add(BEFORE * 64), 64, dst, dst_stride, fy, h);
+        }
     }
 }
 
@@ -267,6 +284,14 @@ mod tests {
             assert_eq!(kernel.iter().sum::<i16>(), 128);
         }
         assert!(FILTERS.iter().all(|f| f[0] == [0, 0, 0, 128, 0, 0, 0, 0]));
+    }
+
+    /// What lets the vector filters sum in 16-bit lanes: see `simd128`.
+    #[test]
+    fn negative_taps_sum_to_a_half_at_most() {
+        for kernel in FILTERS.iter().flatten() {
+            assert!(kernel.iter().filter(|&&tap| tap < 0).sum::<i16>() >= -64);
+        }
     }
 
     /// Halfway between two samples with the bilinear kernel is their rounded
