@@ -47,6 +47,13 @@ jobs:
         with:
           toolchain: 1.98.1
 
+      # Both target directories: the decoder's workspace, and the module's own.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust
+            rust/vp9-web
+
       - name: Test the decoder
         run: cd rust && cargo test -p vp9 --lib
 
