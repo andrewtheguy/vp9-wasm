@@ -1,8 +1,10 @@
 # The module's threads need the standard library built for shared memory, which
 # only a nightly Cargo does (`build-std`, in .cargo/config.toml); the shipped
 # one links, but its locks are single-thread stubs. The pin is this crate's
-# alone, to the channel and not a date: the decoder itself builds on stable.
+# alone: the decoder itself builds on stable. A dated nightly, the one remotex's
+# own module is built with, so a release's archive is the same wherever it is
+# built; the release workflow installs the same date.
 [toolchain]
-channel = "nightly"
+channel = "nightly-2026-09-29"
 components = ["rust-src"]
 profile = "minimal"
