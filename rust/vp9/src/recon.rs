@@ -20,7 +20,7 @@ struct Scratch([i16; 1024]);
 /// One thread's reconstruction of rows of 64×64 blocks.
 pub(crate) struct Recon<'a> {
     f: &'a FrameCtx<'a>,
-    /// All zero but while a block of one coefficient is transformed from it.
+    /// All zero but while a block's coefficients are transformed from it.
     dc: Box<Scratch>,
     /// A reference block with the frame's edge repeated around it.
     mc: Box<[u8; 80 * 80]>,
@@ -131,8 +131,11 @@ impl<'a> Recon<'a> {
                         let dst = self.dst(plane, col, row);
                         self.predict_intra(dst, tx, mode.min(9), bwl, col, row);
                         if !mi.skip {
-                            let tx_type = if plane != 0 || lossless { 0 } else { INTRA_TX_TYPE[mode.min(9) as usize] as usize };
-                            self.residual(dst, tx, tx_type);
+                            let eob = self.eob();
+                            if eob != 0 {
+                                let tx_type = if plane != 0 || lossless { 0 } else { INTRA_TX_TYPE[mode.min(9) as usize] as usize };
+                                self.residual(eob, dst, tx, tx_type);
+                            }
                         }
                     }
                 }
@@ -143,8 +146,10 @@ impl<'a> Recon<'a> {
                 for plane in 0..3 {
                     for row in (0..max_h).step_by(step) {
                         for col in (0..max_w).step_by(step) {
-                            let dst = self.dst(plane, col, row);
-                            self.residual(dst, tx, 0);
+                            let eob = self.eob();
+                            if eob != 0 {
+                                self.residual(eob, self.dst(plane, col, row), tx, 0);
+                            }
                         }
                     }
                 }
@@ -161,27 +166,46 @@ impl<'a> Recon<'a> {
         unsafe { self.f.cur[plane].add((self.mi_row * 8 + row * 4) * self.f.stride + self.mi_col * 8 + col * 4) }
     }
 
-    /// Adds the next transform block's residual, if it has one.
-    fn residual(&mut self, dst: *mut u8, tx: usize, tx_type: usize) {
+    /// How many coefficients the next transform block has in scan order:
+    /// none, for most.
+    #[inline(always)]
+    fn eob(&mut self) -> u16 {
+        // SAFETY: the row is parsed, and nothing writes it until the next frame.
+        let eob = unsafe { &*self.buf }.eobs.get(self.next_eob).copied().unwrap_or(0);
+        self.next_eob += 1;
+        eob
+    }
+
+    /// Adds the residual of a transform block of `eob` coefficients, the next
+    /// that has any.
+    fn residual(&mut self, eob: u16, dst: *mut u8, tx: usize, tx_type: usize) {
         // SAFETY: the row is parsed, and nothing writes it until the next frame.
         let buf = unsafe { &*self.buf };
-        let Some(&eob) = buf.eobs.get(self.next_eob) else { return };
-        self.next_eob += 1;
         let n = 4usize << tx;
         let (lossless, stride) = (self.f.h.lossless, self.f.stride);
+        let block = &mut self.dc.0;
         // SAFETY: a transform block that starts inside the frame ends inside
         // its planes.
         unsafe {
             if eob == 1 {
                 let Some(&dc) = buf.coeffs.get(self.next_coeff) else { return };
                 self.next_coeff += 1;
-                self.dc.0[0] = dc;
-                itx::inverse_add(tx, tx_type, lossless, &self.dc.0[..n * n], 1, dst, stride);
-                self.dc.0[0] = 0;
-            } else if eob > 1 {
-                let Some(coeffs) = buf.coeffs.get(self.next_coeff..self.next_coeff + n * n) else { return };
-                self.next_coeff += n * n;
-                itx::inverse_add(tx, tx_type, lossless, coeffs, eob as usize, dst, stride);
+                block[0] = dc;
+                itx::inverse_add(tx, tx_type, lossless, &block[..n * n], 1, dst, stride);
+                block[0] = 0;
+            } else {
+                let Some(&count) = buf.coeffs.get(self.next_coeff) else { return };
+                let Some(pairs) = buf.coeffs.get(self.next_coeff + 1..self.next_coeff + 1 + 2 * count as usize) else { return };
+                self.next_coeff += 1 + pairs.len();
+                // Each coefficient to its place, and the places zero again
+                // once the block is made.
+                for pair in pairs.chunks_exact(2) {
+                    block[pair[0] as usize & (n * n - 1)] = pair[1];
+                }
+                itx::inverse_add(tx, tx_type, lossless, &block[..n * n], eob as usize, dst, stride);
+                for pair in pairs.chunks_exact(2) {
+                    block[pair[0] as usize & (n * n - 1)] = 0;
+                }
             }
         }
     }

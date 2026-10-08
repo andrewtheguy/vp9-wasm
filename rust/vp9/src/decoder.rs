@@ -282,6 +282,7 @@ impl Decoder {
             h,
             tx_mode,
             probs,
+            counting: !h.error_resilient && !h.frame_parallel,
             width: frame.width,
             height: frame.height,
             mi_cols,

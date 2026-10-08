@@ -177,6 +177,26 @@
         "e55ea813f5ddb3983435479136630043"
       ]
     },
+    "adapting-330x194": {
+      "sha256": "f8573b73f32f0dcae26bf17e1037efc9306a735bbd4939650610fe4c37f5460e",
+      "width": 330,
+      "height": 194,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "35a95841150e307075bfca62e1fd6769",
+        "09a524460622cbaa398c5178f7680602",
+        "ba281e4a361d30eeef3f0050bff4e69c",
+        "80339349d7f061d3d9ac4cd24988b72d",
+        "eb6fa35a03cb3ea13742f13079155c43",
+        "58c8383d4aa8a8b72ee6c060ad79d5db",
+        "44c28b9b155f023639bd9d2858e1cd15",
+        "887f7ab182e18a8017106d648893b719",
+        "25e6b82588dabf1f7ec613c9fc4332ef",
+        "21c40b6883ebb0edf7aad3c555c058c8",
+        "1f0a85d01d698e9b051a2acd50daeb19",
+        "bf09c6fce722a36633673af70dac67cf"
+      ]
+    },
     "bt709-full-160x96": {
       "sha256": "b8d375b7d04bee0f39775b0327a031a18a5fea3b33d31d154ab12ed44f8f2bb1",
       "width": 160,
