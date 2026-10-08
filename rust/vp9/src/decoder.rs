@@ -328,8 +328,13 @@ impl Decoder {
             }
         };
         // A row is made a block behind the row above it, whose samples its
-        // intra blocks predict from.
+        // intra blocks predict from. An inter frame's row starts as the LAST
+        // reference's, before the waits.
         let make = |recon: &mut Recon, row: usize| {
+            if !h.intra() {
+                // SAFETY: the row is this thread's, and nothing has written it.
+                unsafe { recon.start_row(row) };
+            }
             for tile in 0..tile_cols {
                 if !parsed[tile].wait_for(row + 1) {
                     return made[row].fail();

@@ -43,6 +43,40 @@ impl<'a> Recon<'a> {
         Recon { f, dc: Box::new(Scratch([0; 1024])), mc: Box::new([0; 80 * 80]), buf: std::ptr::null(), next_eob: 0, next_coeff: 0, mi_row: 0, mi_col: 0, have_above: false, have_left: false, to_right: 0, to_bottom: 0 }
     }
 
+    /// The row of 64×64 blocks `sb_row` of an inter frame starts as the LAST
+    /// reference's rows, one copy of the contiguous bytes, so that a still
+    /// block from it (`ModeInfo::still`) is in place already. Past the frame's
+    /// right and bottom edges, as far as the last 8×8, the samples are the
+    /// edge's repeated, which is what a block that crosses an edge is
+    /// predicted from (`predict_inter_block`) and what the blocks after it
+    /// and the loop filter read there.
+    ///
+    /// # Safety
+    /// Nothing has written the row yet, and no other thread touches it.
+    pub unsafe fn start_row(&self, sb_row: usize) {
+        let f = self.f;
+        let (stride, w, h) = (f.stride, f.width, f.height);
+        let (cols, rows) = (f.mi_cols * 8, f.mi_rows * 8);
+        let y0 = sb_row * 64;
+        // The row has an 8×8 inside the frame, so it starts above the edge.
+        let y1 = (y0 + 64).min(h);
+        for plane in 0..3 {
+            let (src, dst) = (f.refs[0][plane], f.cur[plane]);
+            // SAFETY: the planes are whole rows of 64×64 blocks, and the
+            // reference is of the frame's size.
+            unsafe {
+                std::ptr::copy_nonoverlapping(src.add(y0 * stride), dst.add(y0 * stride), (y1 - y0) * stride);
+                for y in y0..y1 {
+                    let line = dst.add(y * stride);
+                    std::ptr::write_bytes(line.add(w), *line.add(w - 1), cols - w);
+                }
+                for y in h..(y0 + 64).min(rows) {
+                    std::ptr::copy_nonoverlapping(dst.add((h - 1) * stride), dst.add(y * stride), cols);
+                }
+            }
+        }
+    }
+
     /// Starts on tile column `tile`'s part of the row of 64×64 blocks
     /// `sb_row`, which has been parsed.
     pub fn start(&mut self, tile: usize, sb_row: usize) {
@@ -98,6 +132,10 @@ impl<'a> Recon<'a> {
     }
 
     fn block(&mut self, mi: &ModeInfo, mi_row: usize, mi_col: usize, tile_start: usize) {
+        if mi.still() {
+            // The samples its row started as (`start_row`), and no residual.
+            return;
+        }
         let f = self.f;
         let bsize = mi.sb_type;
         let (bw, bh) = (NUM_8X8_WIDE[bsize as usize] as usize, NUM_8X8_HIGH[bsize as usize] as usize);
