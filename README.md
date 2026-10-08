@@ -116,7 +116,16 @@ and `PATENTS`).
   wide, decodes in parallel by; on one thread a row is parsed, reconstructed,
   and the row above it filtered, in turn. The sample loops that carry the time
   are SIMD128 (`core::arch::wasm32`): the loop filter's edges and the
-  interpolation filters.
+  interpolation filters. Parsing, the one stage that a tile's bytes keep in
+  order, is what a frame waits on with threads, and is written for V8: a
+  block's coefficients are read with the boolean decoder's registers in
+  locals, in a function of their own, every refill one whole word, since the
+  partition's last bytes are kept again with zeros after them; a transform
+  block with no coefficients, which most are, costs one boolean; the
+  coefficients that are not zero are left as their places and values, which
+  reconstruction puts into a block of zeros and takes out again; and symbols
+  are counted only in a frame whose probabilities adapt to them, which no
+  frame of remotex's or wlshare's does.
 - `rust/vp9-web` is the page's module, in the shape of hevc-wasm's:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
@@ -128,6 +137,39 @@ and `PATENTS`).
 - `rust/vp9-bench` is the native harness above. To profile the module itself,
   run it under `node --perf-prof` and `perf record`: the build keeps the
   function names. Profiles and logs go under `tmp/`.
+
+The comparison is between two builds of the module under Bun: as it is, and
+as it was at `1ffc59c`, before its parsing was written for V8. They ran on a
+six-core x86 workstation, alternately on the same cores, one for one thread
+and four for four, once the host was quiet; the medians of three rounds are
+shown. The cycle counts are `perf stat`'s for the whole process. Per frame:
+
+| Capture | Threads | M instructions | M cycles | Median ms |
+|---|---|---|---|---|
+| desktop, 1440×900, 665 frames | 1 | 55.1 → 46.8 | 25.9 → 23.1 | 7.4 → 6.4 |
+| | 4 | 55.4 → 46.3 | 28.0 → 24.5 | 4.1 → 3.2 |
+| a Mac's, 1440×900, 743 frames | 1 | 121.3 → 94.4 | 56.9 → 47.5 | 19.4 → 15.9 |
+| | 4 | 121.7 → 94.5 | 60.9 → 49.2 | 12.0 → 7.8 |
+| a shader animation, 1728×902, 400 frames | 1 | 170.0 → 130.7 | 78.8 → 66.5 | 24.3 → 20.9 |
+| | 4 | 170.2 → 130.6 | 84.7 → 68.9 | 18.2 → 11.9 |
+| a Mac screen recording, 3456×2234, 200 frames | 1 | 447.2 → 378.5 | 210.4 → 188.6 | 74.0 → 68.6 |
+| | 4 | 446.8 → 378.2 | 225.0 → 190.6 | 26.7 → 21.4 |
+
+On these streams a frame is some hundred thousand tokens in tens of thousands
+of transform blocks, most of them 4×4 and six to nine in ten with no
+coefficient at all, so what a transform block costs before its first token
+counts for as much as the tokens do. On one thread the loop filter is a
+quarter of the time, parsing a third, and the inverse transforms and the
+whole-sample copies a twelfth each. With threads a frame of one tile column
+waits on its parsing, which is why the times on four threads fell further
+than the cycles did. Filtering two edges that lie end to end in one vector,
+sixteen positions at a time, was measured and is not done: a third to four
+fifths of the wider edges have the same samples across them and leave after
+their loads, which two together seldom both do.
+
+To benchmark on a busy host, pin both builds to the same cores (`taskset`),
+alternate them, wait for the load to fall before each stream, and read
+`perf stat -e instructions:u,cycles:u` rather than wall time alone.
 
 ## Requirements
 

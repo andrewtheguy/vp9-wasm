@@ -2,7 +2,6 @@
 //! the boolean decoder everything after it is coded with.
 
 use crate::error::{Error, Result};
-use crate::tables::NORM;
 
 /// Bits most significant first.
 pub struct BitReader<'a> {
@@ -46,69 +45,50 @@ impl<'a> BitReader<'a> {
     }
 }
 
-/// What the window is credited with once the data has run out, so that it is
-/// never refilled again: zeros follow the last byte.
-const PAST_END: i32 = 0x4000_0000;
-
-/// The boolean decoder: libvpx's, with a 64-bit window.
-pub struct BoolDecoder<'a> {
-    data: &'a [u8],
-    pos: usize,
+/// The boolean decoder's registers, apart from the partition they read, so
+/// that a loop may keep them in locals of its own.
+#[derive(Clone, Copy)]
+pub(crate) struct Window {
     value: u64,
     /// Bits in `value` below its top byte; negative when it needs a refill.
     count: i32,
     range: u32,
+    /// The bytes taken, counting those past the partition's end, which are 0.
+    pos: usize,
 }
 
-impl<'a> BoolDecoder<'a> {
-    /// A decoder over one partition, whose first bit is a marker that must be 0.
-    pub fn new(data: &'a [u8]) -> Result<Self> {
-        if data.is_empty() {
-            return Err(Error::invalid("an empty partition"));
-        }
-        let mut d = BoolDecoder { data, pos: 0, value: 0, count: -8, range: 255 };
-        d.fill();
-        if d.bit() {
-            return Err(Error::invalid("a partition's marker bit is set"));
-        }
-        Ok(d)
-    }
+/// A partition, and its last bytes again with zeros after them: what a refill
+/// near the end reads, so that every refill is one whole word.
+pub(crate) struct Source<'a> {
+    data: &'a [u8],
+    tail: [u8; 24],
+    /// Where in `data` the tail starts.
+    tail_from: usize,
+}
 
-    /// A decoder of nothing, to stand where one will be.
-    pub fn empty() -> Self {
-        BoolDecoder { data: &[], pos: 0, value: 0, count: 0, range: 255 }
-    }
-
-    #[inline]
-    fn fill(&mut self) {
-        let mut shift = 64 - 8 - (self.count + 8);
-        if self.data.len() - self.pos >= 8 {
-            // Whole bytes at once: as many as the window has room for.
-            let bits = (shift & !7) + 8;
-            let be = u64::from_be_bytes(self.data[self.pos..self.pos + 8].try_into().unwrap());
-            self.value |= (be >> (64 - bits)) << (shift & 7);
-            self.count += bits;
-            self.pos += (bits >> 3) as usize;
-            return;
-        }
-        while shift >= 0 {
-            let Some(&byte) = self.data.get(self.pos) else {
-                self.count += PAST_END;
-                break;
-            };
-            self.count += 8;
-            self.value |= (byte as u64) << shift;
-            self.pos += 1;
-            shift -= 8;
-        }
+impl Window {
+    #[inline(always)]
+    fn refill(&mut self, src: &Source) {
+        let shift = 48 - self.count;
+        // Whole bytes: as many as the window has room for.
+        let bits = (shift & !7) + 8;
+        // SAFETY: eight bytes are in the data from `pos`, or in the tail from
+        // no further than 16 into its 24.
+        let word = unsafe {
+            let from = if self.pos + 8 <= src.data.len() { src.data.as_ptr().add(self.pos) } else { src.tail.as_ptr().add((self.pos - src.tail_from).min(16)) };
+            u64::from_be((from as *const u64).read_unaligned())
+        };
+        self.value |= (word >> (64 - bits)) << (shift & 7);
+        self.count += bits;
+        self.pos += (bits >> 3) as usize;
     }
 
     /// One boolean whose probability of being false is `prob` in 256.
     #[inline(always)]
-    pub fn read(&mut self, prob: u8) -> bool {
+    pub fn read(&mut self, src: &Source, prob: u8) -> bool {
         let split = (self.range * prob as u32 + (256 - prob as u32)) >> 8;
         if self.count < 0 {
-            self.fill();
+            self.refill(src);
         }
         let bigsplit = (split as u64) << 56;
         let bit = self.value >= bigsplit;
@@ -118,11 +98,55 @@ impl<'a> BoolDecoder<'a> {
         } else {
             split
         };
-        let shift = NORM[range as usize & 255];
+        // A range is 1 to 255, and is brought back to 128 at least.
+        let shift = range.leading_zeros() - 24;
         self.range = range << shift;
         self.value <<= shift;
         self.count -= shift as i32;
         bit
+    }
+
+    #[inline(always)]
+    pub fn bit(&mut self, src: &Source) -> bool {
+        self.read(src, 128)
+    }
+}
+
+/// The boolean decoder: libvpx's, with a 64-bit window.
+pub struct BoolDecoder<'a> {
+    pub(crate) win: Window,
+    pub(crate) src: Source<'a>,
+}
+
+impl<'a> BoolDecoder<'a> {
+    /// A decoder over one partition, whose first bit is a marker that must be 0.
+    pub fn new(data: &'a [u8]) -> Result<Self> {
+        if data.is_empty() {
+            return Err(Error::invalid("an empty partition"));
+        }
+        let mut d = BoolDecoder::over(data);
+        if d.bit() {
+            return Err(Error::invalid("a partition's marker bit is set"));
+        }
+        Ok(d)
+    }
+
+    /// A decoder of nothing, to stand where one will be.
+    pub fn empty() -> Self {
+        BoolDecoder::over(&[])
+    }
+
+    fn over(data: &'a [u8]) -> Self {
+        let kept = data.len().min(8);
+        let mut tail = [0; 24];
+        tail[..kept].copy_from_slice(&data[data.len() - kept..]);
+        BoolDecoder { win: Window { value: 0, count: -8, range: 255, pos: 0 }, src: Source { data, tail, tail_from: data.len() - kept } }
+    }
+
+    /// One boolean whose probability of being false is `prob` in 256.
+    #[inline(always)]
+    pub fn read(&mut self, prob: u8) -> bool {
+        self.win.read(&self.src, prob)
     }
 
     #[inline]
@@ -153,8 +177,10 @@ impl<'a> BoolDecoder<'a> {
     }
 
     /// Whether more was read than the partition held: the stream is cut short
-    /// or corrupt.
+    /// or corrupt. As libvpx has it, that is once a refill has asked for a
+    /// byte past the end and the bits of those before it are used up.
     pub fn overran(&self) -> bool {
-        self.count > 64 && self.count < PAST_END
+        let (w, len) = (&self.win, self.src.data.len());
+        w.pos > len && (w.count as i64) < 8 * (w.pos - len) as i64
     }
 }

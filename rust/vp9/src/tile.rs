@@ -4,7 +4,7 @@
 //! vp9_decodemv.c, vp9_detokenize.c, vp9_mvref_common.c and vp9_pred_common.c,
 //! for 4:4:4 and single references.
 
-use crate::bits::BoolDecoder;
+use crate::bits::{BoolDecoder, Source, Window};
 use crate::error::{Error, Result};
 use crate::frame::*;
 use crate::header::{FrameHeader, SWITCHABLE, TX_MODE_SELECT};
@@ -19,8 +19,9 @@ pub(crate) struct RowBuf {
     /// Per transform block of a block that is not skipped, how many
     /// coefficients it has in scan order.
     pub eobs: Vec<u16>,
-    /// Per transform block that has any: its one coefficient, or all of its
-    /// block's when it has more.
+    /// Per transform block that has any: its one coefficient, or how many of
+    /// its coefficients are not zero and then, for each in scan order, where
+    /// in the block it is and its value.
     pub coeffs: Vec<i16>,
 }
 
@@ -38,6 +39,9 @@ pub(crate) struct FrameCtx<'a> {
     pub h: &'a FrameHeader,
     pub tx_mode: u8,
     pub probs: &'a Probs,
+    /// Whether the frame's symbols are counted, for the probabilities to
+    /// adapt to once it has decoded.
+    pub counting: bool,
     /// The size shown, which references are extended from.
     pub width: usize,
     pub height: usize,
@@ -233,6 +237,9 @@ impl<'a> Tile<'a> {
         self.left_part = [0; 8];
         for mi_col in (self.col_start..self.col_end).step_by(8) {
             self.partition(mi_row, mi_col, 4)?;
+            // Once overrun a tile stays so, and what it reads is zeros: there
+            // is no more to parse of it.
+            self.overran()?;
         }
         if sb_row + 1 == self.f.sb_rows {
             self.overran()?;
@@ -354,32 +361,16 @@ impl<'a> Tile<'a> {
             // The 4×4s of the block inside the frame, across and down.
             let max_w = if self.to_right >= 0 { n4_w } else { (n4_w as i32 + (self.to_right >> 5)) as usize };
             let max_h = if self.to_bottom >= 0 { n4_h } else { (n4_h as i32 + (self.to_bottom >> 5)) as usize };
-            // Where the contexts stop being written: 0 for a block inside.
-            let edge_w = if self.to_right >= 0 { 0 } else { max_w };
-            let edge_h = if self.to_bottom >= 0 { 0 } else { max_h };
             let inter = mi.is_inter();
-            let tx = mi.tx_size as usize;
             // SAFETY: this thread alone has the row until it says it is parsed.
             let buf = unsafe { &mut *self.buf };
             // Room for all the block can have, asked for here, where it can
             // be refused: the buffers do not grow as they are parsed into.
-            if buf.coeffs.try_reserve(n4_w * n4_h * 16 * 3).is_err() || buf.eobs.try_reserve(n4_w * n4_h * 3).is_err() {
+            if buf.coeffs.try_reserve(n4_w * n4_h * 33 * 3).is_err() || buf.eobs.try_reserve(n4_w * n4_h * 3).is_err() {
                 return Err(Error::unsupported("more coefficients than the memory has room for"));
             }
             let first = buf.eobs.len();
-            let mut eobtotal = 0;
-            for plane in 0..3 {
-                for row in (0..max_h).step_by(1 << tx) {
-                    for col in (0..max_w).step_by(1 << tx) {
-                        let tx_type = if inter || plane != 0 || f.h.lossless {
-                            0
-                        } else {
-                            INTRA_TX_TYPE[if bsize < BLOCK_8X8 { mi.sub_mode[(row << 1) + col] } else { mi.mode } as usize] as usize
-                        };
-                        eobtotal += self.tokens(plane, col, row, tx, tx_type, inter, edge_w, edge_h);
-                    }
-                }
-            }
+            let eobtotal = if f.counting { self.tokens::<true>(&mi, max_w, max_h) } else { self.tokens::<false>(&mi, max_w, max_h) };
             // What the loop filter and the blocks after this one see: an inter
             // block with no coefficients is a skipped one.
             if inter && bsize >= BLOCK_8X8 && eobtotal == 0 {
@@ -825,108 +816,260 @@ impl<'a> Tile<'a> {
         Ok(())
     }
 
-    /// One transform block's coefficients, dequantized and left in the row's
-    /// buffer: how many there are in scan order. `edge_w` and `edge_h` are
-    /// where the frame ends inside the block, in 4×4s, or 0.
-    fn tokens(&mut self, plane: usize, col: usize, row: usize, tx: usize, tx_type: usize, inter: bool, edge_w: usize, edge_h: usize) -> usize {
+    /// The coefficients of a block's transform blocks, dequantized and left
+    /// in the row's buffer, which has room for them: how many there are in
+    /// scan order, over them all. `max_w` and `max_h` are the 4×4s of the
+    /// block inside the frame. The decoder's registers are locals here, and a
+    /// transform block with no coefficients, which most are, is one boolean.
+    #[inline(never)]
+    fn tokens<const COUNT: bool>(&mut self, mi: &ModeInfo, max_w: usize, max_h: usize) -> usize {
         let f = self.f;
+        let tx = mi.tx_size as usize & 3;
         let n = 1usize << tx;
-        // SAFETY: a block's columns are inside the frame's width rounded up to
-        // whole 64×64 blocks, which the context above is as long as.
-        let a = unsafe { std::slice::from_raw_parts_mut(f.above_nz[plane].add(self.mi_col * 2 + col), n) };
-        let y = ((self.mi_row * 2) & 15) + row;
-        let ctx = a.iter().any(|&v| v != 0) as usize + self.left_nz[plane][y..y + n].iter().any(|&v| v != 0) as usize;
-
-        let (scan, nb) = SCANS[tx][tx_type];
-        let dq = f.dequant[(plane != 0) as usize];
-        let ty = (plane != 0) as usize;
-        // SAFETY: this thread alone has the row until it says it is parsed.
-        let buf = unsafe { &mut *self.buf };
-        let at = buf.coeffs.len();
-        buf.coeffs.resize(at + (16 << (tx << 1)), 0);
-        let eob = decode_coefs(&mut self.r, &f.probs.coef[tx][ty][inter as usize], &mut self.counts.coef[tx][ty][inter as usize], &mut self.counts.eob_branch[tx][ty][inter as usize], &mut buf.coeffs[at..], &mut self.token_cache, tx, dq, ctx, scan, nb);
-        // A block of one coefficient has it first, and keeps only that.
-        buf.coeffs.truncate(at + if eob > 1 { 16 << (tx << 1) } else { eob });
-        buf.eobs.push(eob as u16);
-
-        let v = (eob > 0) as u8;
-        for (i, a) in a.iter_mut().enumerate() {
-            *a = if edge_w != 0 && col + i >= edge_w { 0 } else { v };
+        let inter = mi.is_inter();
+        let intra_luma = !inter && !f.h.lossless;
+        // Where the contexts stop being written, for a block the frame ends in.
+        let inside = self.to_right >= 0 && self.to_bottom >= 0;
+        let (x0, y0) = (self.mi_col * 2, (self.mi_row * 2) & 15);
+        let src = &self.r.src;
+        let mut win = self.r.win;
+        let mut total = 0;
+        // SAFETY: this thread alone has the row until it says it is parsed,
+        // and `block` has made room in it for what this block can have. A
+        // block's columns are inside the frame's width rounded up to whole
+        // 64×64 blocks, which the contexts above are as long as, and its rows
+        // inside the 16 of the contexts to the left.
+        unsafe {
+            let buf = &mut *self.buf;
+            let eobs = buf.eobs.as_mut_ptr().add(buf.eobs.len());
+            let coeffs = buf.coeffs.as_mut_ptr();
+            let (mut blocks, mut at) = (0, buf.coeffs.len());
+            for plane in 0..3 {
+                let ty = (plane != 0) as usize;
+                let probs = &f.probs.coef[tx][ty][inter as usize];
+                let above = f.above_nz[plane].add(x0);
+                let left = self.left_nz[plane].as_mut_ptr().add(y0);
+                let mut row = 0;
+                while row < max_h {
+                    let mut col = 0;
+                    while col < max_w {
+                        let (a, l) = (above.add(col), left.add(row));
+                        let ctx = nz_any(a, tx) + nz_any(l, tx);
+                        let more = win.read(src, probs[0][ctx][0]);
+                        if COUNT {
+                            self.counts.eob_branch[tx][ty][inter as usize][0][ctx] += 1;
+                            self.counts.coef[tx][ty][inter as usize][0][ctx][3] += !more as u32;
+                        }
+                        let mut eob = 0;
+                        if more {
+                            let tx_type = if intra_luma && plane == 0 {
+                                INTRA_TX_TYPE[(if mi.sb_type < BLOCK_8X8 { mi.sub_mode[((row << 1) + col) & 3] } else { mi.mode }).min(9) as usize] as usize
+                            } else {
+                                0
+                            };
+                            // A copy, so that the registers themselves are
+                            // never in memory.
+                            let mut w = win;
+                            let counts = (&mut self.counts.coef[tx][ty][inter as usize], &mut self.counts.eob_branch[tx][ty][inter as usize]);
+                            let written;
+                            (eob, written) = decode_coefs::<COUNT>(&mut w, src, probs, counts, coeffs.add(at), &mut self.token_cache, tx, f.dequant[ty], ctx, SCANS[tx][tx_type]);
+                            win = w;
+                            at += written;
+                        }
+                        *eobs.add(blocks) = eob as u16;
+                        blocks += 1;
+                        total += eob;
+                        let v = (eob > 0) as u8;
+                        if inside {
+                            nz_set(a, tx, v);
+                            nz_set(l, tx, v);
+                        } else {
+                            for i in 0..n {
+                                *a.add(i) = if col + i >= max_w { 0 } else { v };
+                                *l.add(i) = if row + i >= max_h { 0 } else { v };
+                            }
+                        }
+                        col += n;
+                    }
+                    row += n;
+                }
+            }
+            buf.eobs.set_len(buf.eobs.len() + blocks);
+            buf.coeffs.set_len(at);
         }
-        for (i, l) in self.left_nz[plane][y..y + n].iter_mut().enumerate() {
-            *l = if edge_h != 0 && row + i >= edge_h { 0 } else { v };
-        }
-        eob
+        self.r.win = win;
+        total
     }
 }
 
-/// `decode_coefs`: one transform block's tokens.
-#[inline]
-fn decode_coefs(r: &mut BoolDecoder, probs: &[[[u8; 3]; 6]; 6], counts: &mut [[[u32; 4]; 6]; 6], eob_branch: &mut [[u32; 6]; 6], coeffs: &mut [i16], token_cache: &mut [u8; 1024], tx: usize, dq: [i16; 2], mut ctx: usize, scan: &[u16], nb: &[u16]) -> usize {
+/// Whether any of the `1 << tx` contexts at `p` is set.
+#[inline(always)]
+unsafe fn nz_any(p: *const u8, tx: usize) -> usize {
+    unsafe {
+        (match tx {
+            0 => *p != 0,
+            1 => (p as *const u16).read_unaligned() != 0,
+            2 => (p as *const u32).read_unaligned() != 0,
+            _ => (p as *const u64).read_unaligned() != 0,
+        }) as usize
+    }
+}
+
+/// Sets the `1 << tx` contexts at `p` to `v`, which is 0 or 1.
+#[inline(always)]
+unsafe fn nz_set(p: *mut u8, tx: usize, v: u8) {
+    unsafe {
+        match tx {
+            0 => *p = v,
+            1 => (p as *mut u16).write_unaligned(v as u16 * 0x0101),
+            2 => (p as *mut u32).write_unaligned(v as u32 * 0x0101_0101),
+            _ => (p as *mut u64).write_unaligned(v as u64 * 0x0101_0101_0101_0101),
+        }
+    }
+}
+
+/// A token's extra bits, most significant first.
+#[inline(always)]
+fn extra(r: &mut Window, src: &Source, probs: &[u8]) -> i32 {
+    probs.iter().fold(0, |v, &p| (v << 1) | r.read(src, p) as i32)
+}
+
+/// `decode_coefs`: one transform block's tokens after the first, which said
+/// that it has any. Returns how many it has in scan order, and how much was
+/// written at `out`: the one coefficient of a block of one, which is its
+/// first, or else how many are not zero, and each one's place and value.
+///
+/// # Safety
+/// `out` must have room for one more number than twice the block's
+/// coefficients.
+#[inline(never)]
+unsafe fn decode_coefs<const COUNT: bool>(win: &mut Window, src: &Source, probs: &[[[u8; 3]; 6]; 6], counts: (&mut [[[u32; 4]; 6]; 6], &mut [[u32; 6]; 6]), out: *mut i16, token_cache: &mut [u8; 1024], tx: usize, dq: [i16; 2], mut ctx: usize, (scan, nb): Scan) -> (usize, usize) {
+    let (counts, eob_branch) = counts;
     let max_eob = 16usize << (tx << 1);
     let band_translate: &[u8] = if tx == 0 { &COEFBAND_4X4 } else { &COEFBAND_8X8PLUS };
     let dq_shift = (tx == 3) as u32;
+    let mut r = *win;
     let mut dqv = dq[0] as i32;
     let mut c = 0;
-    let context = |cache: &[u8; 1024], c: usize| (1 + cache[nb[2 * c] as usize & 1023] as usize + cache[nb[2 * c + 1] as usize & 1023] as usize) >> 1;
-    let extra = |r: &mut BoolDecoder, probs: &[u8]| probs.iter().fold(0i32, |v, &p| (v << 1) | r.read(p) as i32);
+    let mut band = 0;
+    let mut prob = &probs[0][ctx.min(5)];
+    // SAFETY, for every index below that is not checked: `c` is less than
+    // `max_eob`, which the scan and the bands are as long as and the
+    // neighbours twice as long; a scan's places and its neighbours are inside
+    // the block, which the cache is as large as the largest of; and a band
+    // and a context are each under 6, the cache holding 5 at most. The tests
+    // hold the tables to this.
+    // After the count, which is written last.
+    let mut pairs = 1;
+    let context = |cache: &[u8; 1024], c: usize| unsafe { (1 + *cache.get_unchecked(*nb.get_unchecked(2 * c) as usize) as usize + *cache.get_unchecked(*nb.get_unchecked(2 * c + 1) as usize) as usize) >> 1 };
+    let place = |c: usize| unsafe { *scan.get_unchecked(c) as usize };
+    let band_of = |c: usize| unsafe { *band_translate.get_unchecked(c) as usize };
+    let prob_of = |band: usize, ctx: usize| unsafe { probs.get_unchecked(band).get_unchecked(ctx) };
 
-    while c < max_eob {
-        let mut band = band_translate[c] as usize;
-        let mut prob = &probs[band][ctx];
-        eob_branch[band][ctx] += 1;
-        if !r.read(prob[0]) {
-            counts[band][ctx][3] += 1;
-            break;
-        }
-        while !r.read(prob[1]) {
-            counts[band][ctx][0] += 1;
+    'block: loop {
+        while !r.read(src, prob[1]) {
+            if COUNT {
+                counts[band][ctx][0] += 1;
+            }
             dqv = dq[1] as i32;
-            token_cache[scan[c] as usize] = 0;
+            unsafe { *token_cache.get_unchecked_mut(place(c)) = 0 };
             c += 1;
             if c >= max_eob {
-                return c;
+                break 'block;
             }
             ctx = context(token_cache, c);
-            band = band_translate[c] as usize;
-            prob = &probs[band][ctx];
+            band = band_of(c);
+            prob = prob_of(band, ctx);
         }
 
-        let pos = scan[c] as usize;
-        let v = if r.read(prob[2]) {
-            counts[band][ctx][2] += 1;
+        let pos = place(c);
+        let v = if r.read(src, prob[2]) {
+            if COUNT {
+                counts[band][ctx][2] += 1;
+            }
             let p = &PARETO8_FULL[(prob[2] as usize).saturating_sub(1)];
-            if r.read(p[0]) {
-                let val = if r.read(p[3]) {
-                    token_cache[pos] = 5;
-                    if r.read(p[5]) {
-                        if r.read(p[7]) { 67 + extra(r, &CAT6) } else { 35 + extra(r, &CAT5) }
-                    } else if r.read(p[6]) {
-                        19 + extra(r, &CAT4)
+            if r.read(src, p[0]) {
+                let val = if r.read(src, p[3]) {
+                    unsafe { *token_cache.get_unchecked_mut(pos) = 5 };
+                    if r.read(src, p[5]) {
+                        if r.read(src, p[7]) { 67 + extra(&mut r, src, &CAT6) } else { 35 + extra(&mut r, src, &CAT5) }
+                    } else if r.read(src, p[6]) {
+                        19 + extra(&mut r, src, &CAT4)
                     } else {
-                        11 + extra(r, &CAT3)
+                        11 + extra(&mut r, src, &CAT3)
                     }
                 } else {
-                    token_cache[pos] = 4;
-                    if r.read(p[4]) { 7 + extra(r, &CAT2) } else { 5 + extra(r, &CAT1) }
+                    unsafe { *token_cache.get_unchecked_mut(pos) = 4 };
+                    if r.read(src, p[4]) { 7 + extra(&mut r, src, &CAT2) } else { 5 + extra(&mut r, src, &CAT1) }
                 };
                 val.wrapping_mul(dqv) >> dq_shift
-            } else if r.read(p[1]) {
-                token_cache[pos] = 3;
-                ((3 + r.read(p[2]) as i32) * dqv) >> dq_shift
+            } else if r.read(src, p[1]) {
+                unsafe { *token_cache.get_unchecked_mut(pos) = 3 };
+                ((3 + r.read(src, p[2]) as i32) * dqv) >> dq_shift
             } else {
-                token_cache[pos] = 2;
+                unsafe { *token_cache.get_unchecked_mut(pos) = 2 };
                 (2 * dqv) >> dq_shift
             }
         } else {
-            counts[band][ctx][1] += 1;
-            token_cache[pos] = 1;
+            if COUNT {
+                counts[band][ctx][1] += 1;
+            }
+            unsafe { *token_cache.get_unchecked_mut(pos) = 1 };
             dqv >> dq_shift
         };
-        coeffs[pos] = (if r.bit() { -v } else { v }) as i16;
+        let v = (if r.bit(src) { -v } else { v }) as i16;
+        // SAFETY: the caller's: a pair for each coefficient, after the count.
+        unsafe {
+            *out.add(pairs) = pos as i16;
+            *out.add(pairs + 1) = v;
+        }
+        pairs += 2;
         c += 1;
+        if c >= max_eob {
+            break;
+        }
         ctx = context(token_cache, c);
         dqv = dq[1] as i32;
+        band = band_of(c);
+        prob = prob_of(band, ctx);
+        if COUNT {
+            eob_branch[band][ctx] += 1;
+        }
+        if !r.read(src, prob[0]) {
+            if COUNT {
+                counts[band][ctx][3] += 1;
+            }
+            break;
+        }
     }
-    c
+    *win = r;
+    // SAFETY: as above. A block of one coefficient has it first.
+    unsafe {
+        if c == 1 {
+            *out = *out.add(2);
+            (1, 1)
+        } else {
+            *out = (pairs >> 1) as i16;
+            (c, pairs)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `decode_coefs` takes on trust of the tables it indexes.
+    #[test]
+    fn the_scans_and_the_bands_stay_inside_their_blocks() {
+        for (tx, scans) in SCANS.iter().enumerate() {
+            let n = 16usize << (tx << 1);
+            for (scan, nb) in scans {
+                assert_eq!(scan.len(), n);
+                assert!(nb.len() >= 2 * n);
+                assert!(scan.iter().chain(nb.iter()).all(|&v| (v as usize) < n));
+            }
+        }
+        assert!(COEFBAND_4X4.iter().chain(&COEFBAND_8X8PLUS).all(|&b| b < 6));
+    }
 }

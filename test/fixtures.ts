@@ -96,6 +96,10 @@ export const SPECS = {
     frames: 8,
     encoder: ["-deadline", "good", "-cpu-used", "0", "-lag-in-frames", "0", "-auto-alt-ref", "0", "-crf", "30", "-b:v", "0", "-g", "9999"],
   },
+  // Probabilities that adapt to each frame's symbols, which libvpx as
+  // remotex configures it never asks of a decoder: the counts are kept only
+  // for a stream like this one.
+  "adapting-330x194": { size: "330x194", pixFmt: "yuv444p", extra: ["-frame-parallel", "0"] },
   "bt709-full-160x96": { size: "160x96", pixFmt: "yuv444p", frames: 2, extra: ["-colorspace", "bt709", "-color_range", "pc"] },
   // What the decoder refuses: 4:2:0, which a browser decodes itself.
   "yuv420p-330x194": { size: "330x194", pixFmt: "yuv420p", frames: 4 },

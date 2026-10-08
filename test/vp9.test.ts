@@ -47,6 +47,7 @@ const DECODED = [
   "keyframes-330x194",
   "lossless-160x96",
   "thorough-330x194",
+  "adapting-330x194",
 ] as const;
 
 describe("a 4:4:4 stream", () => {
