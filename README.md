@@ -147,33 +147,40 @@ and `PATENTS`).
   function names. Profiles and logs go under `tmp/`.
 
 The comparison is between two builds of the module under Bun: as it is, and
-as it was at `1ffc59c`, before its parsing was written for V8. They ran on a
-six-core x86 workstation, alternately on the same cores, one for one thread
-and four for four, once the host was quiet; the medians of three rounds are
-shown. The cycle counts are `perf stat`'s for the whole process. Per frame:
+release 0.0.2. They ran on a six-core x86 workstation, alternately on the
+same cores, one for one thread and four for four, once the host was quiet;
+the medians of three rounds are shown. The cycle counts are `perf stat`'s for
+the whole process and do not depend on the load. Per frame:
 
 | Capture | Threads | M instructions | M cycles | Median ms |
 |---|---|---|---|---|
-| desktop, 1440×900, 665 frames | 1 | 55.1 → 46.8 | 25.9 → 23.1 | 7.4 → 6.4 |
-| | 4 | 55.4 → 46.3 | 28.0 → 24.5 | 4.1 → 3.2 |
-| a Mac's, 1440×900, 743 frames | 1 | 121.3 → 94.4 | 56.9 → 47.5 | 19.4 → 15.9 |
-| | 4 | 121.7 → 94.5 | 60.9 → 49.2 | 12.0 → 7.8 |
-| a shader animation, 1728×902, 400 frames | 1 | 170.0 → 130.7 | 78.8 → 66.5 | 24.3 → 20.9 |
-| | 4 | 170.2 → 130.6 | 84.7 → 68.9 | 18.2 → 11.9 |
-| a Mac screen recording, 3456×2234, 200 frames | 1 | 447.2 → 378.5 | 210.4 → 188.6 | 74.0 → 68.6 |
-| | 4 | 446.8 → 378.2 | 225.0 → 190.6 | 26.7 → 21.4 |
+| desktop, 1440×900, 665 frames | 1 | 46.7 → 43.2 | 22.9 → 21.3 | 5.9 → 5.1 |
+| | 4 | 46.4 → 42.8 | 24.5 → 23.0 | 3.4 → 3.1 |
+| a Mac's, 1440×900, 743 frames | 1 | 94.4 → 84.4 | 47.1 → 42.8 | 14.6 → 13.1 |
+| | 4 | 94.4 → 84.3 | 49.0 → 44.3 | 8.0 → 7.2 |
+| a shader animation, 1728×902, 822 frames | 1 | 127.6 → 112.1 | 64.5 → 57.4 | 20.9 → 18.2 |
+| | 4 | 127.7 → 112.1 | 66.9 → 59.6 | 11.4 → 10.3 |
+| a Mac screen recording, 3456×2234, 200 frames | 1 | 378.4 → 347.1 | 184.7 → 173.4 | 64.0 → 59.4 |
+| | 4 | 378.1 → 347.4 | 189.7 → 176.6 | 20.6 → 18.2 |
 
 On these streams a frame is some hundred thousand tokens in tens of thousands
 of transform blocks, most of them 4×4 and six to nine in ten with no
 coefficient at all, so what a transform block costs before its first token
 counts for as much as the tokens do. On one thread the loop filter is a
-quarter of the time, parsing a third, and the inverse transforms and the
-whole-sample copies a twelfth each. With threads a frame of one tile column
-waits on its parsing, which is why the times on four threads fell further
-than the cycles did. Filtering two edges that lie end to end in one vector,
-sixteen positions at a time, was measured and is not done: a third to four
-fifths of the wider edges have the same samples across them and leave after
-their loads, which two together seldom both do.
+quarter to a third of the time, parsing a quarter to two fifths, the
+whole-sample copies of the still blocks a tenth, and the inverse transforms,
+now by vector, a thirtieth. With threads a frame of one tile column waits on
+its parsing, which is why what the parsing gained the four-thread times
+gained whole. Of the steps since 0.0.2: the transforms by vector were 4% to
+6% of the cycles, and the parser's end marker, large tokens apart and
+function per transform size, 3% to 5% together, where the first two alone
+were nothing and a loss. Filtering two edges that lie end to end in one
+vector, sixteen positions at a time, was measured and is not done: a third to
+four fifths of the wider edges have the same samples across them and leave
+after their loads, which two together seldom both do; nor are the edge
+kernels functions of their own, which cost 4% more instructions for no fewer
+cycles. What it does not do yet, with what was measured on the way, is in
+[docs/remaining.md](docs/remaining.md).
 
 To benchmark on a busy host, pin both builds to the same cores (`taskset`),
 alternate them, wait for the load to fall before each stream, and read
