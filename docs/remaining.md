@@ -217,14 +217,39 @@ most the masks' row above; and libvpx's own `ss00` path for 4:4:4, whose
 kernels filter two rows of 8×8 blocks at once, which the pairs above say
 is no gain here.
 
-The larger step is not the decoder's. Every frame of the captures has a
-filter level of 7 to 9 and a sharpness of 0, a light filter that still
-visits every edge, and libvpx's `VP9E_SET_DISABLE_LOOPFILTER` makes the
-level 0, at which a frame is not filtered at all: the frame without the
-filter is 13.3 M cycles of the desktop capture's 20.3, 25.6 of the Mac's
-39.4, 36.9 of the shader animation's 53.6 and 90.8 of the recording's
-159.3. What it costs the picture at these qualities is `screen-vp9`'s to
-measure.
+The larger step is the encoder's, and it is paid for in the picture.
+Every frame of the captures has a filter level of 7 to 9 and a sharpness of
+0: libvpx at this speed takes the level from the quantizer, never below 4
+between keyframes, a light filter that still visits every edge. Its
+`VP9E_SET_DISABLE_LOOPFILTER` at 2 makes the level 0, at which a frame is
+not filtered at all. Each capture was coded again by `screen-vp9` 0.0.8
+with the filter and without it, at the capture's quality and threads, the
+recordings by their first 300 frames, and the module decodes each of the
+twelve streams as libvpx does. The bytes are without the filter over with
+it, the PSNR libvpx's decoder's against the planes that went in, the cycles
+a frame on one thread and the milliseconds a frame on four:
+
+| | bytes | luma dB | chroma dB | encode | M cycles | ms on four |
+| --- | --- | --- | --- | --- | --- | --- |
+| desktop | +2.3% | 55.09 → 54.47 | 57.13 → 56.15 | −11% | 21.0 → 13.9 | 3.7 → 3.1 |
+| Mac | +4.5% | 47.12 → 46.20 | 51.89 → 50.18 | −5% | 40.1 → 26.5 | 6.0 → 5.9 |
+| shader animation | +5.4% | 50.23 → 49.54 | 53.78 → 52.58 | −4% | 53.6 → 38.2 | 8.1 → 8.0 |
+| 3456×1804 desktop | +2.4% | 52.40 → 51.93 | 56.67 → 55.84 | −5% | 234.9 → 174.3 | 27.9 → 19.0 |
+| recording, q90 | +5.0% | 50.34 → 49.48 | 55.04 → 53.29 | −2% | 156.3 → 94.2 | 17.5 → 11.3 |
+| recording, q100 | +8.2% | 51.53 → 50.82 | 55.84 → 54.62 | −2% | 212.3 → 139.2 | 23.3 → 16.4 |
+
+One thread decodes in 26% to 40% fewer cycles. Four gain a third at 3456
+wide, where there are four tiles to parse at once, and little at 1440,
+where there are two and the frame waits on their parsing: the shader
+animation's own stream with the filter left out of the module is 7.7 ms
+for 8.1, and its 5% more bytes take that back. The filter is worth more to
+the picture than its level suggests, since every later frame predicts from
+what it smoothed. At the same luma PSNR the Mac capture without the filter
+is quality 97 for 90, 34% more bytes, and then 31.4 M cycles a frame for
+40.1; the shader animation without it at quality 100 has a PSNR between
+those of 98 and 100 with it, which are 18% and 5% fewer bytes. Not done: it is a dial of
+`screen-vp9`'s to add, for a stream whose decoder is what holds the frame
+rate and whose link has the bytes.
 
 ### 4. The rest
 
