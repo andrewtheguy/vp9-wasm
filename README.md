@@ -182,7 +182,15 @@ the whole process and do not depend on the load. Release 0.0.3 and release
 Against libvpx, as release 0.0.5 in the same runs and ffmpeg 7.1's
 `libvpx-vp9` decoder (libvpx 1.15.0) alternated with it; the cycles are each
 whole process's, the module's ms its own clock's mean over the frames and
-libvpx's its process's wall time over them:
+libvpx's its process's wall time over them. The command is
+`ffmpeg -threads N -c:v libvpx-vp9 -i FILE -benchmark -f null -`, and the
+build Debian 13's: ffmpeg 7.1.5-0+deb13u1, by gcc 14 with
+`--toolchain=hardened --enable-shared --enable-libvpx`, over its libvpx9
+1.15.0-2.1+deb13u1, configured `--target=x86_64-linux-gcc --enable-pic
+--enable-shared --enable-vp9-highbitdepth --enable-postproc
+--enable-vp9-postproc`, which picks its vector code as it runs, AVX2 on this
+i5-8500T, and whose high bit depth build widens the coefficients of an 8-bit
+stream to 32 bits:
 
 | Capture | Threads | M cycles, libvpx | M cycles, module | Mean ms, libvpx | Mean ms, module |
 |---|---|---|---|---|---|
