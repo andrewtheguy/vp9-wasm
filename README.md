@@ -115,8 +115,11 @@ and `PATENTS`).
   on rayon's pool, which is what a frame of one tile, a desktop under 1920
   wide, decodes in parallel by; on one thread a row is parsed, reconstructed,
   and the row above it filtered, in turn. The sample loops that carry the time
-  are SIMD128 (`core::arch::wasm32`): the loop filter's edges and the
-  interpolation filters. Parsing, the one stage that a tile's bytes keep in
+  are SIMD128 (`core::arch::wasm32`): the loop filter's edges, the
+  interpolation filters, and the inverse transforms these streams are made
+  of, the 4×4 ones and the 8×8 DCT, a row to a lane and each rotation a dot
+  product, exact to the plain code for every input. Parsing, the one stage
+  that a tile's bytes keep in
   order, is what a frame waits on with threads, and is written for V8: a
   block's coefficients are read with the boolean decoder's registers in
   locals, in a function of their own, every refill one whole word, since the
