@@ -26,7 +26,6 @@ pub(crate) struct Recon<'a> {
     mc: Box<[u8; 80 * 80]>,
     /// The row's coefficients, and how far into them the blocks have got.
     buf: *const RowBuf,
-    next_eob: usize,
     next_coeff: usize,
 
     // The block being made.
@@ -40,7 +39,7 @@ pub(crate) struct Recon<'a> {
 
 impl<'a> Recon<'a> {
     pub fn new(f: &'a FrameCtx<'a>) -> Self {
-        Recon { f, dc: Box::new(Scratch([0; 1024])), mc: Box::new([0; 80 * 80]), buf: std::ptr::null(), next_eob: 0, next_coeff: 0, mi_row: 0, mi_col: 0, have_above: false, have_left: false, to_right: 0, to_bottom: 0 }
+        Recon { f, dc: Box::new(Scratch([0; 1024])), mc: Box::new([0; 80 * 80]), buf: std::ptr::null(), next_coeff: 0, mi_row: 0, mi_col: 0, have_above: false, have_left: false, to_right: 0, to_bottom: 0 }
     }
 
     /// The row of 64×64 blocks `sb_row` of an inter frame starts as the LAST
@@ -81,7 +80,6 @@ impl<'a> Recon<'a> {
     /// `sb_row`, which has been parsed.
     pub fn start(&mut self, tile: usize, sb_row: usize) {
         self.buf = self.f.rows[tile * self.f.sb_rows + sb_row].0.get();
-        self.next_eob = 0;
         self.next_coeff = 0;
     }
 
@@ -156,6 +154,9 @@ impl<'a> Recon<'a> {
         if !mi.is_inter() {
             // A block under 8×8 is two 4×4s a side.
             let bwl = (B_WIDTH_LOG2[bsize as usize] as u32).max(1);
+            // The transform blocks with coefficients come in the order walked
+            // here, so the next one's place is compared with each block's.
+            let mut coded = if mi.skip { 0 } else { self.coded() };
             for plane in 0..3 {
                 for row in (0..max_h).step_by(step) {
                     for col in (0..max_w).step_by(step) {
@@ -168,12 +169,11 @@ impl<'a> Recon<'a> {
                         };
                         let dst = self.dst(plane, col, row);
                         self.predict_intra(dst, tx, mode.min(9), bwl, col, row);
-                        if !mi.skip {
-                            let eob = self.eob();
-                            if eob != 0 {
-                                let tx_type = if plane != 0 || lossless { 0 } else { INTRA_TX_TYPE[mode.min(9) as usize] as usize };
-                                self.residual(eob, dst, tx, tx_type);
-                            }
+                        if coded > 0 && self.next_place() == Some((plane << 8) | (row << 4) | col) {
+                            coded -= 1;
+                            let Some(eob) = self.next_eob() else { return };
+                            let tx_type = if plane != 0 || lossless { 0 } else { INTRA_TX_TYPE[mode.min(9) as usize] as usize };
+                            self.residual(eob, dst, tx, tx_type);
                         }
                     }
                 }
@@ -181,18 +181,47 @@ impl<'a> Recon<'a> {
         } else {
             self.predict_inter(mi, n4_w, n4_h);
             if !mi.skip {
-                for plane in 0..3 {
-                    for row in (0..max_h).step_by(step) {
-                        for col in (0..max_w).step_by(step) {
-                            let eob = self.eob();
-                            if eob != 0 {
-                                self.residual(eob, self.dst(plane, col, row), tx, 0);
-                            }
-                        }
+                // The transform blocks with coefficients alone, each at its
+                // place; one that is not a whole transform block of this
+                // block inside the frame is nothing the parser wrote.
+                for _ in 0..self.coded() {
+                    let Some(place) = self.next_place() else { return };
+                    let Some(eob) = self.next_eob() else { return };
+                    let (plane, row, col) = (place >> 8, (place >> 4) & 15, place & 15);
+                    if plane > 2 || row >= max_h || col >= max_w || (row | col) & (step - 1) != 0 {
+                        return;
                     }
+                    self.residual(eob, self.dst(plane, col, row), tx, 0);
                 }
             }
         }
+    }
+
+    /// How many transform blocks of the block have coefficients: what the
+    /// parser left first.
+    #[inline(always)]
+    fn coded(&mut self) -> usize {
+        // SAFETY: the row is parsed, and nothing writes it until the next frame.
+        let n = unsafe { &*self.buf }.coeffs.get(self.next_coeff).copied().unwrap_or(0);
+        self.next_coeff += 1;
+        n.max(0) as usize
+    }
+
+    /// The next coded transform block's place, left where it is.
+    #[inline(always)]
+    fn next_place(&self) -> Option<usize> {
+        // SAFETY: as above.
+        unsafe { &*self.buf }.coeffs.get(self.next_coeff).map(|&p| p as u16 as usize)
+    }
+
+    /// Past the next coded transform block's place, how many coefficients
+    /// it has in scan order.
+    #[inline(always)]
+    fn next_eob(&mut self) -> Option<u16> {
+        // SAFETY: as above.
+        let eob = unsafe { &*self.buf }.coeffs.get(self.next_coeff + 1).map(|&e| e as u16);
+        self.next_coeff += 2;
+        eob
     }
 
     /// Where the transform block at (`col`, `row`) 4×4s into the block is, in
@@ -202,16 +231,6 @@ impl<'a> Recon<'a> {
         // SAFETY: the block starts inside the frame, whose planes are whole
         // 64×64 blocks.
         unsafe { self.f.cur[plane].add((self.mi_row * 8 + row * 4) * self.f.stride + self.mi_col * 8 + col * 4) }
-    }
-
-    /// How many coefficients the next transform block has in scan order:
-    /// none, for most.
-    #[inline(always)]
-    fn eob(&mut self) -> u16 {
-        // SAFETY: the row is parsed, and nothing writes it until the next frame.
-        let eob = unsafe { &*self.buf }.eobs.get(self.next_eob).copied().unwrap_or(0);
-        self.next_eob += 1;
-        eob
     }
 
     /// Adds the residual of a transform block of `eob` coefficients, the next

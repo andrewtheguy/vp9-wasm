@@ -154,8 +154,7 @@ each costs. On the Mac's, 30% of them are in `decode_coefs`, 23% in the loop
 filter's early-outs, 15% in `Recon::block`'s test of each transform block
 for coefficients, 8% in `tokens`, 6% in `inverse_add`. The tokens and the
 edges are decisions on the data, which no layout makes predictable; the
-test in `Recon::block` is not, since the parser knows which blocks are coded
-(4 below).
+test in `Recon::block` was not, and is gone (4 below).
 
 ### 3. The loop filter
 
@@ -186,15 +185,19 @@ and whose kernels filter two rows of 8×8 blocks at once.
   plain code. The desktop capture has 184 8×8 ADST blocks a frame, 0.4% of
   its instructions; the others have fewer. An exact port needs 32-bit lanes
   for the ADST, whose stages libvpx's C keeps at 32 bits.
-- **`Recon::block`**, 7% to 8%: the end-of-block count of every transform
-  block read with a bounds check and tested, which mispredicts 45K times a
-  frame on the Mac capture, 1.8% of its cycles; the coefficients scattered
-  into a block of zeros and cleared again; and the intra predictors, which
-  are plain code (intra blocks are 0.6% to 6% of the area). The parser could
-  leave a list of the coded transform blocks alone, each with its place, so
-  that an inter block's residual walks that and not every block, and for a
-  4×4 the coefficients could be built into the two vectors the transform
-  takes.
+- **`Recon::block`**, 7% to 8% before this: the end-of-block count of every
+  transform block was read with a bounds check and tested, and the test
+  mispredicted 45K times a frame on the Mac capture. Now the parser leaves
+  each block's coded transform blocks alone, each with its place, in the
+  row's one buffer, and an inter block's residual walks those; an intra
+  block, predicted transform block by transform block, compares each with
+  the next place. Per frame on one thread: the desktop capture 20.9 → 20.6 M
+  cycles, the Mac's 41.9 → 40.7, the shader animation 60.3 → 58.4, the
+  recording 167.8 → 164.4; on four threads 22.4 → 22.1, 43.9 → 42.5,
+  62.7 → 61.0 and 172.2 → 169.6. What remains of it is the coefficients
+  scattered into a block of zeros and cleared again, which for a 4×4 could
+  be built into the two vectors the transform takes, and the intra
+  predictors, which are plain code (intra blocks are 0.6% to 6% of the area).
 - **The fills.** Each `fill` of a few bytes of the context arrays, and of the
   32-byte `ModeInfo` over a block's cells, is a `memory.fill` into V8's
   runtime, 0.8% of the desktop capture; whole words as hevc-wasm writes them

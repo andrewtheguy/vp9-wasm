@@ -13,15 +13,15 @@ use crate::tables::*;
 use std::cell::UnsafeCell;
 
 /// The coefficients of one tile's row of 64×64 blocks, in the order its
-/// transform blocks are coded: parsed into, then reconstructed from.
+/// blocks are coded: parsed into, then reconstructed from.
 #[derive(Default)]
 pub(crate) struct RowBuf {
-    /// Per transform block of a block that is not skipped, how many
-    /// coefficients it has in scan order.
-    pub eobs: Vec<u16>,
-    /// Per transform block that has any: its one coefficient, or how many of
-    /// its coefficients are not zero and then, for each in scan order, where
-    /// in the block it is and its value.
+    /// Per block that is not skipped: how many of its transform blocks have
+    /// coefficients, then for each of those in coding order its place (the
+    /// plane, the row and the column in 4×4s, as `plane << 8 | row << 4 |
+    /// col`), how many coefficients it has in scan order, and its one
+    /// coefficient, or how many of its coefficients are not zero and then,
+    /// for each in scan order, where in the block it is and its value.
     pub coeffs: Vec<i16>,
 }
 
@@ -230,7 +230,6 @@ impl<'a> Tile<'a> {
         self.buf = self.f.rows[self.index * self.f.sb_rows + sb_row].0.get();
         // SAFETY: this thread alone has the row until it says it is parsed.
         unsafe {
-            (*self.buf).eobs.clear();
             (*self.buf).coeffs.clear();
         }
         self.left_nz = [[0; 16]; 3];
@@ -366,10 +365,10 @@ impl<'a> Tile<'a> {
             let buf = unsafe { &mut *self.buf };
             // Room for all the block can have, asked for here, where it can
             // be refused: the buffers do not grow as they are parsed into.
-            if buf.coeffs.try_reserve(n4_w * n4_h * 33 * 3).is_err() || buf.eobs.try_reserve(n4_w * n4_h * 3).is_err() {
+            if buf.coeffs.try_reserve(n4_w * n4_h * 35 * 3 + 1).is_err() {
                 return Err(Error::unsupported("more coefficients than the memory has room for"));
             }
-            let first = buf.eobs.len();
+            let first = buf.coeffs.len();
             let eobtotal = match (f.counting, mi.tx_size & 3) {
                 (false, 0) => self.tokens::<false, 0>(&mi, max_w, max_h),
                 (false, 1) => self.tokens::<false, 1>(&mi, max_w, max_h),
@@ -385,7 +384,7 @@ impl<'a> Tile<'a> {
             if inter && bsize >= BLOCK_8X8 && eobtotal == 0 {
                 mi.skip = true;
                 // SAFETY: as above.
-                unsafe { (*self.buf).eobs.truncate(first) };
+                unsafe { (*self.buf).coeffs.truncate(first) };
             }
         }
 
@@ -852,9 +851,11 @@ impl<'a> Tile<'a> {
         // inside the 16 of the contexts to the left.
         unsafe {
             let buf = &mut *self.buf;
-            let eobs = buf.eobs.as_mut_ptr().add(buf.eobs.len());
             let coeffs = buf.coeffs.as_mut_ptr();
-            let (mut blocks, mut at) = (0, buf.coeffs.len());
+            // The count of the transform blocks with coefficients goes first,
+            // once they are counted.
+            let header = buf.coeffs.len();
+            let (mut coded, mut at) = (0, header + 1);
             for plane in 0..3 {
                 let ty = (plane != 0) as usize;
                 let probs = &f.probs.coef[tx][ty][inter as usize];
@@ -883,12 +884,15 @@ impl<'a> Tile<'a> {
                             let mut w = win;
                             let counts = (&mut self.counts.coef[tx][ty][inter as usize], &mut self.counts.eob_branch[tx][ty][inter as usize]);
                             let written;
-                            (eob, written) = decode_coefs::<COUNT, TX>(&mut w, src, probs, counts, coeffs.add(at), &mut self.token_cache, f.dequant[ty], ctx, SCANS[tx][tx_type]);
+                            (eob, written) = decode_coefs::<COUNT, TX>(&mut w, src, probs, counts, coeffs.add(at + 2), &mut self.token_cache, f.dequant[ty], ctx, SCANS[tx][tx_type]);
                             win = w;
-                            at += written;
+                            // The record's place and count, before its
+                            // coefficients.
+                            *coeffs.add(at) = ((plane << 8) | (row << 4) | col) as i16;
+                            *coeffs.add(at + 1) = eob as i16;
+                            at += 2 + written;
+                            coded += 1;
                         }
-                        *eobs.add(blocks) = eob as u16;
-                        blocks += 1;
                         total += eob;
                         let v = (eob > 0) as u8;
                         if inside {
@@ -905,7 +909,7 @@ impl<'a> Tile<'a> {
                     row += n;
                 }
             }
-            buf.eobs.set_len(buf.eobs.len() + blocks);
+            *coeffs.add(header) = coded as i16;
             buf.coeffs.set_len(at);
         }
         self.r.win = win;
