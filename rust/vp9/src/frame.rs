@@ -13,6 +13,7 @@ pub struct Mv {
 }
 
 pub const INTRA_FRAME: u8 = 0;
+pub const LAST_FRAME: u8 = 1;
 
 pub const NEARESTMV: u8 = 10;
 pub const NEARMV: u8 = 11;
@@ -47,6 +48,15 @@ impl ModeInfo {
     #[inline]
     pub fn is_inter(&self) -> bool {
         self.ref_frame > INTRA_FRAME
+    }
+
+    /// Whether the block is the last frame's samples at its own place: a
+    /// skipped block with no motion from the LAST reference, which on a
+    /// screen is nearly every block. Its row started as those samples
+    /// (`Recon::start_row`), so it costs nothing to make.
+    #[inline]
+    pub fn still(&self) -> bool {
+        self.ref_frame == LAST_FRAME && self.skip && self.sub_mv == [Mv::default(); 4]
     }
 }
 
