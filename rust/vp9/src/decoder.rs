@@ -19,6 +19,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// The most samples a frame may have: 8192×4320.
 const MAX_SAMPLES: usize = 8192 * 4320;
 
+/// The most bytes a decoder's frames may take together, those it keeps and
+/// those its caller still holds: three quarters of the gibibyte the page's
+/// module can grow to, the rest being for what else a frame is decoded with.
+const MAX_FRAME_BYTES: usize = 768 << 20;
+
 /// A frame that is shown.
 pub struct Decoded {
     pub frame: Arc<Frame>,
@@ -39,9 +44,11 @@ pub struct Decoder {
     #[cfg_attr(not(feature = "threads"), allow(dead_code))]
     threads: usize,
     refs: [Option<Arc<Frame>>; 8],
-    /// Every frame made, for its buffers to be used again once nothing else
-    /// holds it.
+    /// Every frame made that is still held, for its buffers to be used again
+    /// once nothing else holds it.
     pool: Vec<Arc<Frame>>,
+    /// What the frames in the pool and one more may take together.
+    frame_bytes: usize,
     contexts: [Probs; 4],
     /// The colour last stated, which a frame that states none has.
     colour: Colour,
@@ -66,6 +73,7 @@ impl Decoder {
             threads: threads.max(1),
             refs: Default::default(),
             pool: Vec::new(),
+            frame_bytes: MAX_FRAME_BYTES,
             contexts: Default::default(),
             colour: Colour::default(),
             lf_ref_deltas: [1, 0, -1, -1],
@@ -108,12 +116,18 @@ impl Decoder {
         Ok(shown)
     }
 
-    fn fresh_frame(&mut self, width: usize, height: usize) -> Frame {
-        self.pool.retain(|f| f.width == width && f.height == height);
-        if let Some(i) = self.pool.iter().position(|f| Arc::strong_count(f) == 1) {
+    fn fresh_frame(&mut self, width: usize, height: usize) -> Result<Frame> {
+        // A frame of another size goes once nothing else holds it: until
+        // then it is memory taken, and counted.
+        self.pool.retain(|f| Arc::strong_count(f) > 1 || (f.width == width && f.height == height));
+        if let Some(i) = self.pool.iter().position(|f| Arc::strong_count(f) == 1 && f.width == width && f.height == height) {
             if let Ok(frame) = Arc::try_unwrap(self.pool.swap_remove(i)) {
-                return frame;
+                return Ok(frame);
             }
+        }
+        let held: usize = self.pool.iter().map(|f| Frame::bytes(f.width, f.height)).sum();
+        if held + Frame::bytes(width, height) > self.frame_bytes {
+            return Err(Error::unsupported(format!("a {width}x{height} frame, with the {} still held, is more than a decoder keeps", self.pool.len())));
         }
         Frame::new(width, height)
     }
@@ -186,7 +200,7 @@ impl Decoder {
         let prev = self.prev.clone().filter(|_| use_prev_mvs && !h.intra());
         let refs_held: [Option<Arc<Frame>>; 3] = std::array::from_fn(|i| if h.intra() { None } else { self.refs[h.ref_slots[i]].clone() });
 
-        let mut frame = self.fresh_frame(width, height);
+        let mut frame = self.fresh_frame(width, height)?;
         frame.colour = h.colour.unwrap_or(self.colour);
         let lf = (h.lf_level != 0).then(|| LoopFilter::new(&h, ref_deltas, mode_deltas));
         let counts = self.decode_rows(&h, tx_mode, &probs, tiles, &mut frame, &refs_held, prev.as_deref(), lf.as_ref())?;
@@ -525,6 +539,24 @@ mod tests {
         assert!(Decoder::new(1).decode(&shown_at(&[bits(159), bits(95)].concat())).unwrap().is_some());
         let e = Decoder::new(1).decode(&shown_at(&[bits(159), bits(47)].concat())).err().expect("refused");
         assert_eq!(e, Error::unsupported("a 160x96 frame to be shown scaled, at 160x48"));
+    }
+
+    #[test]
+    fn a_frame_more_than_the_decoder_keeps_is_refused_until_one_is_let_go() {
+        let (key, inter) = fixture();
+        let mut d = Decoder::new(1);
+        d.frame_bytes = Frame::bytes(160, 96);
+        // The keyframe is in every slot, so the next frame is a second one.
+        let shown = d.decode(key).unwrap().unwrap();
+        let e = d.decode(inter).err().expect("refused");
+        assert_eq!(e, Error::unsupported("a 160x96 frame, with the 1 still held, is more than a decoder keeps"));
+        // A keyframe has no room either while the first is in the slots, and
+        // the caller's hold on it is not what keeps it.
+        drop(shown);
+        assert!(d.decode(key).is_err());
+        d.frame_bytes = 2 * Frame::bytes(160, 96);
+        assert!(d.decode(key).unwrap().is_some());
+        assert!(d.decode(inter).unwrap().is_some());
     }
 
     #[test]

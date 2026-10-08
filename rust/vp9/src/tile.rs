@@ -360,7 +360,13 @@ impl<'a> Tile<'a> {
             let inter = mi.is_inter();
             let tx = mi.tx_size as usize;
             // SAFETY: this thread alone has the row until it says it is parsed.
-            let first = unsafe { (*self.buf).eobs.len() };
+            let buf = unsafe { &mut *self.buf };
+            // Room for all the block can have, asked for here, where it can
+            // be refused: the buffers do not grow as they are parsed into.
+            if buf.coeffs.try_reserve(n4_w * n4_h * 16 * 3).is_err() || buf.eobs.try_reserve(n4_w * n4_h * 3).is_err() {
+                return Err(Error::unsupported("more coefficients than the memory has room for"));
+            }
+            let first = buf.eobs.len();
             let mut eobtotal = 0;
             for plane in 0..3 {
                 for row in (0..max_h).step_by(1 << tx) {
