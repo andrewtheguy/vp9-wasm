@@ -1,0 +1,30 @@
+# The pure-Rust VP9 decoder for the page (vp9), and the native harness that
+# checks it against libvpx's checksums (vp9-bench). The page's module, vp9-web,
+# is built apart by ../build.sh.
+[workspace]
+resolver = "2"
+members = ["vp9", "vp9-bench"]
+# The page's module builds alone, for wasm32 with the nightly and the flags in
+# vp9-web/.cargo/config.toml.
+exclude = ["vp9-web"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "BSD-3-Clause"
+rust-version = "1.85"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = 1
+
+# For `perf`: release speed without the cross-crate inlining that folds every
+# stage into one symbol.
+[profile.profiling]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = true

@@ -1,0 +1,13 @@
+# Decodes an IVF file natively and prints each frame's MD5 as
+# `ffmpeg -f framemd5` does, to check the decoder against libvpx's.
+[package]
+name = "vp9-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+vp9 = { path = "../vp9", features = ["threads"] }
+rayon = "1"

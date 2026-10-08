@@ -1,0 +1,21 @@
+# SIMD, for the sample loops. Threads, for the picture's tiles and filtered rows, which run side
+# by side: `atomics` and a memory that is shared, imported so each thread's
+# instance is given the one memory, and declared with the maximum a shared memory
+# must have. The thread-local exports are what wasm-bindgen sets each thread's
+# storage up with.
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "target-feature=+simd128,+atomics,+bulk-memory",
+  "-C", "link-arg=--shared-memory",
+  "-C", "link-arg=--import-memory",
+  "-C", "link-arg=--max-memory=1073741824",
+  "-C", "link-arg=--export=__wasm_init_tls",
+  "-C", "link-arg=--export=__tls_size",
+  "-C", "link-arg=--export=__tls_align",
+  "-C", "link-arg=--export=__tls_base",
+]
+
+# The standard library as shipped is built without `atomics`: its locks and its
+# allocator are one thread's. So it is built here, with the flags above.
+[unstable]
+build-std = ["std", "panic_abort"]

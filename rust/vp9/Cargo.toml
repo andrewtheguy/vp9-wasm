@@ -1,0 +1,28 @@
+# The decoder for the VP9 remotex and wlshare send a browser at 4:4:4, and
+# nothing else of VP9: profile 1 at 8 bits, one size per stream, single
+# references. Anything else is refused by name rather than decoded wrong.
+#
+# The decoding arithmetic and tables were transcribed from libvpx 1.16.0
+# (https://chromium.googlesource.com/webm/libvpx, BSD-3-Clause); see LICENSE
+# and PATENTS.
+[package]
+name = "vp9"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+# Decode a frame's tiles and filter its rows on rayon's pool: the page's
+# workers, or threads of the native harness's. Without it they run one after
+# another on the caller.
+threads = ["dep:rayon"]
+
+[dependencies]
+rayon = { version = "1", optional = true }
+
+[lints.clippy]
+too_many_arguments = "allow"
+needless_range_loop = "allow"
