@@ -122,13 +122,39 @@ to the top byte, the compare, the select, the leading-zero count and the
 two shifts, some thirteen cycles, which no layout of the loop shortens.
 Beside it ride the context lookups, two neighbours in the token cache, the
 band, and the probability at `probs[band][ctx]` by a multiply by 18 that a
-table of the 36 probability triples' offsets would make a shift; and
-`tokens` costs about 46 cycles per transform block, most of them empty, in
-the two context reads, the one boolean, the end-of-block write and the two
-context writes. The largest lever is not the decoder's: the captures are one
-tile column each, and libvpx codes up to four at 1440 wide
-(`tile-columns`), which `screen-vp9` could ask for; the decoder parses tile
-columns side by side already (`tiles-608x130`).
+table of the 36 probability triples' offsets would make a shift. The largest
+lever is not the decoder's: the captures are one tile column each, and
+libvpx codes up to four at 1440 wide (`tile-columns`), which `screen-vp9`
+now asks for; the decoder parses tile columns side by side already
+(`tiles-608x130`).
+
+**The transform block with no coefficients**, which most are, was measured
+and is not to be tried again as it was (`tmp/logs/tokens-empty-path.patch`
+holds both forms). `tokens` costs about 45 cycles per transform block on the
+Mac capture, 7.5% of its frame, and between two blocks runs a chain from one
+block's first boolean through the context byte it stores, which the next
+block loads back, adds, and addresses its probability by, into the multiply
+that makes the split. The left context kept in a local over the row and the
+three first-boolean probabilities in locals, so that no load waits on the
+context: no fewer cycles on any capture, the desktop 21.0 M against 20.9,
+the Mac's 42.6 against 42.0, the shader animation 60.9 against 60.5, the
+recording 169.8 against 168.3, and the function grown from 487 instructions
+to 1,384, V8 spilling the window's value word each block. The three splits
+computed from the range before the context is known, so that the context's
+chain ends in two masks and not a multiply: the same cycles for 1.3 M more
+instructions on the Mac's frame. In both, as in `decode_coefs`, the samples
+sit on the range recurrence, so the empty block is bounded by the boolean's
+chain like every other block and token, and what the other thirty cycles
+are is mostly the branch on whether the block has coefficients, which a
+third of the Mac's do.
+
+Branch mispredictions are 0.31 M a frame on the Mac capture and 0.12 M on
+the desktop's, about a tenth of each frame's cycles at the fifteen to twenty
+each costs. On the Mac's, 30% of them are in `decode_coefs`, 23% in the loop
+filter's early-outs, 15% in `Recon::block`'s test of each transform block
+for coefficients, 8% in `tokens`, 6% in `inverse_add`. The tokens and the
+edges are decisions on the data, which no layout makes predictable; the
+test in `Recon::block` was not, and is gone (4 below).
 
 ### 3. The loop filter
 
@@ -159,12 +185,23 @@ and whose kernels filter two rows of 8×8 blocks at once.
   plain code. The desktop capture has 184 8×8 ADST blocks a frame, 0.4% of
   its instructions; the others have fewer. An exact port needs 32-bit lanes
   for the ADST, whose stages libvpx's C keeps at 32 bits.
-- **`Recon::block`**, 7% to 8%: the end-of-block count of every transform
-  block read with a bounds check, the coefficients scattered into a block of
-  zeros and cleared again, and the intra predictors, which are plain code
-  (intra blocks are 0.6% to 6% of the area). The count could be checked once
-  per block, and for a 4×4 the coefficients built into the two vectors the
-  transform takes.
+- **`Recon::block`**, 7% to 8% before this: the end-of-block count of every
+  transform block was read with a bounds check and tested, and the test
+  mispredicted 45K times a frame on the Mac capture. Now the parser leaves
+  each block's coded transform blocks alone, each with its place, in the
+  row's one buffer, and an inter block's residual walks those; an intra
+  block, predicted transform block by transform block, compares each with
+  the next place. Per frame on one thread: the desktop capture 20.9 → 20.6 M
+  cycles, the Mac's 41.9 → 40.7, the shader animation 60.3 → 58.4, the
+  recording 167.8 → 164.4; on four threads 22.4 → 22.1, 43.9 → 42.5,
+  62.7 → 61.0 and 172.2 → 169.6. Then the 4×4's coefficients, nearly all
+  of them, stopped being scattered into a block of zeros and cleared again:
+  the parser zeroes sixteen and writes each in its place, and the transform
+  loads its two vectors from the row's buffer. Against the step before, on
+  one thread: 20.9 → 20.4, 41.0 → 39.5, 55.5 → 53.4, 159.3 → 157.5; on four
+  22.7 → 22.4, 42.5 → 41.4, 57.7 → 55.8, 163.2 → 162.2. What remains of it
+  is the larger blocks' scatter, few, and the intra predictors, which are
+  plain code (intra blocks are 0.6% to 6% of the area).
 - **The fills.** Each `fill` of a few bytes of the context arrays, and of the
   32-byte `ModeInfo` over a block's cells, is a `memory.fill` into V8's
   runtime, 0.8% of the desktop capture; whole words as hevc-wasm writes them

@@ -129,9 +129,13 @@ and `PATENTS`).
   again with zeros after them; a token of five or more, with its category and
   extra bits, is read in a function apart, so the loop over the rest stays
   small enough that V8 keeps the registers in registers; a transform block
-  with no coefficients, which most are, costs one boolean; the coefficients
-  that are not zero are left as their places and values, which reconstruction
-  puts into a block of zeros and takes out again; and symbols are counted
+  with no coefficients, which most are, costs one boolean and leaves nothing
+  behind; the parser leaves each block's coded transform blocks alone, each
+  with its place, so an inter block's residual walks those and not every
+  transform block; a 4×4's coefficients are left whole, in place, as the
+  transform loads them, and a larger block's as their places and values,
+  which reconstruction puts into a block of zeros and takes out again; and
+  symbols are counted
   only in a frame whose probabilities adapt to them, which no frame of
   remotex's or wlshare's does.
 - `rust/vp9-web` is the page's module, in the shape of hevc-wasm's:
