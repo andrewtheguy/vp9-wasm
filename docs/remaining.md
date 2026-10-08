@@ -1,0 +1,192 @@
+# What remains
+
+What the decoder does, how it is built and what it measures against the
+release before are in the [README](../README.md). This is the list of what
+it does not do yet, in the order the work would go, with what was measured
+on the way and what was tried and found no faster, so that it is not tried
+again as it was. Numbers are from the module under Bun or Node on one thread
+of a six-core x86 workstation (`tmp/measure.sh`, `tmp/interleave.sh`,
+`tmp/jitprof.sh` with `tmp/hot.sh` for a function's instructions), on the
+four captures the README's table names, unless stated otherwise.
+
+## Speed
+
+### Where the time goes
+
+Profiled as the module under Node on one thread. Shares of a frame:
+
+| function | desktop | Mac | shader | what it is |
+|---|---|---|---|---|
+| the loop filter (`decode_rows`'s filter closure) | 31% | 30% | 27% | the masks of a 64×64 block from its modes, and the edge kernels inlined |
+| `decode_coefs`, with `large_token` | 20% | 23% | 30% | a transform block's tokens after the first |
+| `convolve::predict` | 11% | 8% | 7% | nearly all of it the whole-sample copy of a still block, its 64-wide stores waiting on memory |
+| `Recon::block` | 7% | 8% | 8% | the walk over a block's transform blocks, the coefficients into place and out again, intra prediction |
+| `tokens` | 4% | 8% | 9% | the first boolean of each transform block, and its contexts |
+| `Tile::block` | 4% | 3% | 2.5% | a block's modes and motion vectors, and the mode grid filled |
+| `find_mv_refs` | 2.4% | 2% | 1.6% | |
+| `BoolDecoder::tree` | 1.8% | 1.7% | 1.4% | the symbols of the mode trees |
+| `inverse_add` | 1.6% | 3.6% | 4.4% | the transforms, by vector |
+| `memory_fill_wrapper` | 0.8% | | | V8's runtime, for the `memory.fill` behind each small `fill` |
+
+Per frame of the desktop capture (1440×900, 665 frames): 2,200 blocks, 66%
+of them skipped; 21K transform blocks, 17K of them 8×8 and nine in ten of
+those empty; 59K loop-filter kernel calls, 60% of which find the same
+samples on both sides of the edge and leave after their loads. Of the Mac's
+(1440×900, 743 frames): 3,300 blocks; 70K transform blocks, nearly all 4×4,
+21K of them coded with three coefficients each on average; 103K kernel
+calls, 25% leaving early, and 45K of them the narrow four-tap filter. Of
+the shader animation (1728×902, 822 frames): 3,550 blocks; 81K 4×4
+transform blocks, 31K coded, and 26K 8×8; 144K kernel calls, 37% leaving
+early. Every capture is one tile column, so a frame's parsing is one
+thread's whatever the pool, and it is what the four-thread time waits on.
+
+### 1. The still blocks, and the copy each one is
+
+Nearly every block of a screen is an inter block with a zero motion vector
+from the last frame and no residual: 57% of the desktop capture's area, 51%
+of the Mac's, 31% of the shader's. Each such block is a whole-sample copy
+from the reference in `convolve::predict`, and that is where that function's
+share goes: on the desktop a frame copies 2.3 MB in blocks at 2.7 GB/s, the
+64-wide stores stalling on lines not in cache. hevc-wasm's two steps apply
+here and are the next work:
+
+- **Each row of 64×64 blocks starts as the last frame's rows**, copied in
+  one sequential pass before the row waits on the row above, so a still
+  block costs nothing in reconstruction: no dispatch, no strided copy.
+- **Most of that copy is not made.** A pooled buffer still holds the frame it
+  was decoded as, known by a serial number, and each frame records per 64×64
+  block whether it left the block as the last frame had it: every block in
+  it still and skipped, and no loop-filter kernel that wrote into it. A free
+  buffer holding a frame the last frame descends from, parent by parent, is
+  that frame already wherever no frame on the way changed the block, and a
+  row copies only the runs of blocks changed. Measured natively, counting
+  the 64×64 blocks that come out identical to the frame before, filter
+  included: 57% of the desktop capture's, 42% of the Mac's, 28% of the
+  shader's, which is all but a few hundredths of the blocks whose modes say
+  still. The buffer two frames back is the free one in the usual steady
+  state (last, golden and the shown picture held), so the chain is one step.
+
+Two things VP9 adds to hevc-wasm's version. A skipped block's own left and
+top edges are still deblocked when the frame's filter level is not zero,
+which it never is on these captures, so a still block is unchanged only
+where the kernels on its edges left early or found nothing to do; the
+kernels must say whether they wrote, and the block, the one to its left and
+the one above it be marked when they did. And the captures are 1440×900,
+whose height is not a multiple of 8: a still block that crosses the frame's
+bottom or right edge is predicted in libvpx from the reference's edge
+replicated (`extend_and_predict`), and the samples beyond the edge are read
+by the intra prediction and the loop filter of the blocks after it, so a
+row started as the last frame's must replicate the edge row and column over
+the strip beyond the frame before its blocks are made. Expected: most of
+`convolve::predict`'s share on one thread, nothing on four, where the frame
+waits on its parsing.
+
+### 2. Parsing
+
+`decode_coefs` and `tokens` are 25% to 40% of a frame on one thread and
+all of it on the critical path with threads. The decoder's two registers are
+in locals, the bits read ahead carry their own end marker, the large tokens
+are read in a function apart and the token loop is a function per transform
+size; V8 now keeps the registers in registers, and the zero-token loop is
+about 45 instructions.
+
+What was measured and is not to be tried again as it was: the end marker
+alone, which cut 1% of the instructions and no cycles; the large tokens
+apart alone, which cost a call per such token and 1% of the cycles; the two
+together gain 1% to 2% and are kept.
+
+What remains is the boolean's own chain, from one bin's range to the next's:
+the multiply by the probability, the add and shift, the shift of the split
+to the top byte, the compare, the select, the leading-zero count and the
+two shifts, some thirteen cycles, which no layout of the loop shortens.
+Beside it ride the context lookups, two neighbours in the token cache, the
+band, and the probability at `probs[band][ctx]` by a multiply by 18 that a
+table of the 36 probability triples' offsets would make a shift; and
+`tokens` costs about 46 cycles per transform block, most of them empty, in
+the two context reads, the one boolean, the end-of-block write and the two
+context writes. The largest lever is not the decoder's: the captures are one
+tile column each, and libvpx codes up to four at 1440 wide
+(`tile-columns`), which `screen-vp9` could ask for; the decoder parses tile
+columns side by side already (`tiles-608x130`).
+
+### 3. The loop filter
+
+A quarter to a third of a frame on one thread, in the edge kernels, which
+are vectors already with the eight positions of an edge in the low eight
+lanes and leave early where the samples are the same across the edge. About
+83 cycles a call on average, the early-outs included.
+
+Measured and no faster: the six kernels as functions of their own rather
+than inlined into the filter's loop, 4% more instructions and no fewer
+cycles, although the loop is a 5,000-instruction function full of spills;
+and, before this release, two edges that lie end to end in one vector
+(`tmp/lf-pair-kept` holds that version), since a third to four fifths of the
+wider edges leave after their loads and two together seldom both do. On the
+Mac capture, where the narrow four-tap filter is 45K of 103K calls and only
+a quarter leave early, that pairing may read differently; it was not
+measured per filter width.
+
+Untried: the masks settled as the blocks are parsed, as hevc-wasm's
+boundary strengths are, instead of the scan of the 64 modes of a block at
+filter time (about 0.6% of the instructions, so by itself small); and
+libvpx's own `ss00` path for 4:4:4, whose masks are 64-bit words per block
+and whose kernels filter two rows of 8×8 blocks at once.
+
+### 4. The rest
+
+- **Transforms.** The ADST at 8 and 16 and the DCT at 16 and 32 run as
+  plain code. The desktop capture has 184 8×8 ADST blocks a frame, 0.4% of
+  its instructions; the others have fewer. An exact port needs 32-bit lanes
+  for the ADST, whose stages libvpx's C keeps at 32 bits.
+- **`Recon::block`**, 7% to 8%: the end-of-block count of every transform
+  block read with a bounds check, the coefficients scattered into a block of
+  zeros and cleared again, and the intra predictors, which are plain code
+  (intra blocks are 0.6% to 6% of the area). The count could be checked once
+  per block, and for a 4×4 the coefficients built into the two vectors the
+  transform takes.
+- **The fills.** Each `fill` of a few bytes of the context arrays, and of the
+  32-byte `ModeInfo` over a block's cells, is a `memory.fill` into V8's
+  runtime, 0.8% of the desktop capture; whole words as hevc-wasm writes them
+  would do, and `ModeInfo` could be half its size, since only a block under
+  8×8 has four motion vectors.
+- **Four threads.** Against one, by the README table's medians: the desktop
+  capture 1.65×, the Mac's 1.8×, the shader animation 1.8×, the Mac
+  recording 3.3×, all bound by the one tile's parsing (2 above).
+
+### Elsewhere
+
+- **The target machine.** Every number is from an x86 workstation under Bun
+  and Node. The module has not been run on Apple silicon, where V8 lowers
+  SIMD128 to NEON differently and the memory system differs; the copies and
+  the filter may rank differently there.
+- **The native build runs the plain code**: the kernels are written for
+  `core::arch::wasm32`. `vp9-bench` is for correctness, not speed.
+
+## Coverage
+
+The six recorded 4:4:4 captures decode bit for bit, and none trips a
+refusal. What remotex and wlshare might yet send is a stream of more than
+one tile column (decoded, and parsed in parallel), a resize at a keyframe
+(decoded), or an intra-only frame (decoded); a reference of another size, a
+frame shown again, compound prediction or segmentation would be refused by
+name, and nothing is known to produce them.
+
+## Robustness
+
+- **Malformed input must return an error, never trap.** The fuzz target
+  (`rust/vp9/fuzz`, see the README) decodes each input on one thread and on
+  a pool of three and compares. The boolean decoder's end marker and its
+  overrun check are new since the last long run; the target should have
+  hours on them before the next release after this one, and a corpus from
+  the captures' frames.
+- **The module's vector loops** have only the damaged fixtures of `bun test`
+  against them, on one thread and four. The transforms were checked exact
+  to the plain code on 120,000 random blocks under Node
+  (`tmp/itx-wasm-check`).
+
+## Verification
+
+`bun test` decodes the ten 4:4:4 fixtures on one thread, two and four; the
+captures are checked by hand with `tmp/verify.sh` against libvpx's
+`framemd5`. A fixture nearer the captures' size, and one of two tile columns
+at a desktop's width, belong in `test/`.

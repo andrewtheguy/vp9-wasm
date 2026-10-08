@@ -10,8 +10,15 @@
 //!
 //! Each DCT is its half-size DCT over the even inputs plus a stage for the odd
 //! ones, which is what the C's flat stages compute.
+//!
+//! The 4×4 transforms, the 8×8 DCT and the add of a block of one coefficient
+//! have twins in WebAssembly vectors in `simd128`, exact to these for every
+//! input, which the module runs; the rest run as they are.
 
 use core::num::Wrapping;
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+mod simd128;
 
 const C1: i32 = 16364;
 const C2: i32 = 16305;
@@ -324,6 +331,17 @@ unsafe fn add_2d<const N: usize>(
 #[inline(always)]
 unsafe fn add_dc(n: usize, shift: u32, dc: i16, dst: *mut u8, stride: usize) {
     let a1 = (rs(rs(dc as i32 * C16) * C16) + (1 << (shift - 1))) >> shift;
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: the caller's: the block is n samples square.
+    return unsafe {
+        match n {
+            4 => simd128::add_dc::<4>(a1, dst, stride),
+            8 => simd128::add_dc::<8>(a1, dst, stride),
+            16 => simd128::add_dc::<16>(a1, dst, stride),
+            _ => simd128::add_dc::<32>(a1, dst, stride),
+        }
+    };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     for y in 0..n {
         // SAFETY: the caller's: row y of the block, n samples wide.
         unsafe {
@@ -426,6 +444,12 @@ pub unsafe fn inverse_add(
         let dct = tx_type == 0 || tx_size == 3;
         if dct && eob <= 1 {
             return add_dc(n, [4, 5, 6, 6][tx_size], coeffs[0], dst, stride);
+        }
+        #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+        match (tx_size, tx_type) {
+            (0, t) => return simd128::add_4x4(t, coeffs.as_ptr(), dst, stride),
+            (1, 0) => return simd128::add_8x8(coeffs.as_ptr(), dst, stride),
+            _ => {}
         }
         match (tx_size, tx_type) {
             (0, 0) => add_2d(coeffs, 4, 4, idct4, idct4, dst, stride),

@@ -370,7 +370,16 @@ impl<'a> Tile<'a> {
                 return Err(Error::unsupported("more coefficients than the memory has room for"));
             }
             let first = buf.eobs.len();
-            let eobtotal = if f.counting { self.tokens::<true>(&mi, max_w, max_h) } else { self.tokens::<false>(&mi, max_w, max_h) };
+            let eobtotal = match (f.counting, mi.tx_size & 3) {
+                (false, 0) => self.tokens::<false, 0>(&mi, max_w, max_h),
+                (false, 1) => self.tokens::<false, 1>(&mi, max_w, max_h),
+                (false, 2) => self.tokens::<false, 2>(&mi, max_w, max_h),
+                (false, _) => self.tokens::<false, 3>(&mi, max_w, max_h),
+                (true, 0) => self.tokens::<true, 0>(&mi, max_w, max_h),
+                (true, 1) => self.tokens::<true, 1>(&mi, max_w, max_h),
+                (true, 2) => self.tokens::<true, 2>(&mi, max_w, max_h),
+                (true, _) => self.tokens::<true, 3>(&mi, max_w, max_h),
+            };
             // What the loop filter and the blocks after this one see: an inter
             // block with no coefficients is a skipped one.
             if inter && bsize >= BLOCK_8X8 && eobtotal == 0 {
@@ -821,10 +830,12 @@ impl<'a> Tile<'a> {
     /// scan order, over them all. `max_w` and `max_h` are the 4×4s of the
     /// block inside the frame. The decoder's registers are locals here, and a
     /// transform block with no coefficients, which most are, is one boolean.
+    /// `TX` is the block's transform size, so that the widths that hang on it
+    /// are constants of the code.
     #[inline(never)]
-    fn tokens<const COUNT: bool>(&mut self, mi: &ModeInfo, max_w: usize, max_h: usize) -> usize {
+    fn tokens<const COUNT: bool, const TX: usize>(&mut self, mi: &ModeInfo, max_w: usize, max_h: usize) -> usize {
         let f = self.f;
-        let tx = mi.tx_size as usize & 3;
+        let tx = TX;
         let n = 1usize << tx;
         let inter = mi.is_inter();
         let intra_luma = !inter && !f.h.lossless;
@@ -872,7 +883,7 @@ impl<'a> Tile<'a> {
                             let mut w = win;
                             let counts = (&mut self.counts.coef[tx][ty][inter as usize], &mut self.counts.eob_branch[tx][ty][inter as usize]);
                             let written;
-                            (eob, written) = decode_coefs::<COUNT>(&mut w, src, probs, counts, coeffs.add(at), &mut self.token_cache, tx, f.dequant[ty], ctx, SCANS[tx][tx_type]);
+                            (eob, written) = decode_coefs::<COUNT, TX>(&mut w, src, probs, counts, coeffs.add(at), &mut self.token_cache, f.dequant[ty], ctx, SCANS[tx][tx_type]);
                             win = w;
                             at += written;
                         }
@@ -934,6 +945,29 @@ fn extra(r: &mut Window, src: &Source, probs: &[u8]) -> i32 {
     probs.iter().fold(0, |v, &p| (v << 1) | r.read(src, p) as i32)
 }
 
+/// A token of five or more, after the booleans that said so: its category
+/// and its extra bits. Apart from the rest, which is nearly every token, so
+/// that the loop over them stays small.
+///
+/// # Safety
+/// `cache` is the token's place in the cache.
+#[inline(never)]
+unsafe fn large_token(r: &mut Window, src: &Source, p: &[u8; 8], cache: *mut u8) -> i32 {
+    if r.read(src, p[3]) {
+        unsafe { *cache = 5 };
+        if r.read(src, p[5]) {
+            if r.read(src, p[7]) { 67 + extra(r, src, &CAT6) } else { 35 + extra(r, src, &CAT5) }
+        } else if r.read(src, p[6]) {
+            19 + extra(r, src, &CAT4)
+        } else {
+            11 + extra(r, src, &CAT3)
+        }
+    } else {
+        unsafe { *cache = 4 };
+        if r.read(src, p[4]) { 7 + extra(r, src, &CAT2) } else { 5 + extra(r, src, &CAT1) }
+    }
+}
+
 /// `decode_coefs`: one transform block's tokens after the first, which said
 /// that it has any. Returns how many it has in scan order, and how much was
 /// written at `out`: the one coefficient of a block of one, which is its
@@ -943,8 +977,9 @@ fn extra(r: &mut Window, src: &Source, probs: &[u8]) -> i32 {
 /// `out` must have room for one more number than twice the block's
 /// coefficients.
 #[inline(never)]
-unsafe fn decode_coefs<const COUNT: bool>(win: &mut Window, src: &Source, probs: &[[[u8; 3]; 6]; 6], counts: (&mut [[[u32; 4]; 6]; 6], &mut [[u32; 6]; 6]), out: *mut i16, token_cache: &mut [u8; 1024], tx: usize, dq: [i16; 2], mut ctx: usize, (scan, nb): Scan) -> (usize, usize) {
+unsafe fn decode_coefs<const COUNT: bool, const TX: usize>(win: &mut Window, src: &Source, probs: &[[[u8; 3]; 6]; 6], counts: (&mut [[[u32; 4]; 6]; 6], &mut [[u32; 6]; 6]), out: *mut i16, token_cache: &mut [u8; 1024], dq: [i16; 2], mut ctx: usize, (scan, nb): Scan) -> (usize, usize) {
     let (counts, eob_branch) = counts;
+    let tx = TX;
     let max_eob = 16usize << (tx << 1);
     let band_translate: &[u8] = if tx == 0 { &COEFBAND_4X4 } else { &COEFBAND_8X8PLUS };
     let dq_shift = (tx == 3) as u32;
@@ -989,19 +1024,8 @@ unsafe fn decode_coefs<const COUNT: bool>(win: &mut Window, src: &Source, probs:
             }
             let p = &PARETO8_FULL[(prob[2] as usize).saturating_sub(1)];
             if r.read(src, p[0]) {
-                let val = if r.read(src, p[3]) {
-                    unsafe { *token_cache.get_unchecked_mut(pos) = 5 };
-                    if r.read(src, p[5]) {
-                        if r.read(src, p[7]) { 67 + extra(&mut r, src, &CAT6) } else { 35 + extra(&mut r, src, &CAT5) }
-                    } else if r.read(src, p[6]) {
-                        19 + extra(&mut r, src, &CAT4)
-                    } else {
-                        11 + extra(&mut r, src, &CAT3)
-                    }
-                } else {
-                    unsafe { *token_cache.get_unchecked_mut(pos) = 4 };
-                    if r.read(src, p[4]) { 7 + extra(&mut r, src, &CAT2) } else { 5 + extra(&mut r, src, &CAT1) }
-                };
+                // SAFETY: as above.
+                let val = unsafe { large_token(&mut r, src, p, token_cache.as_mut_ptr().add(pos)) };
                 val.wrapping_mul(dqv) >> dq_shift
             } else if r.read(src, p[1]) {
                 unsafe { *token_cache.get_unchecked_mut(pos) = 3 };
