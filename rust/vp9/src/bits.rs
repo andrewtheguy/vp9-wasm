@@ -49,9 +49,11 @@ impl<'a> BitReader<'a> {
 /// that a loop may keep them in locals of its own.
 #[derive(Clone, Copy)]
 pub(crate) struct Window {
+    /// The bits read ahead at the top, the top byte being the one the
+    /// arithmetic compares, then a set bit marking their end, then zeros. The
+    /// marker carries the count of them: it rises as they are used up, and the
+    /// word's low half being zero is the sign that fewer than 32 remain.
     value: u64,
-    /// Bits in `value` below its top byte; negative when it needs a refill.
-    count: i32,
     range: u32,
     /// The bytes taken, counting those past the partition's end, which are 0.
     pos: usize,
@@ -67,19 +69,29 @@ pub(crate) struct Source<'a> {
 }
 
 impl Window {
+    /// Nothing read ahead: the marker at the top.
+    const EMPTY: u64 = 1 << 63;
+
+    /// The bits read ahead and not yet used, the top byte among them.
+    #[inline(always)]
+    fn held(&self) -> u32 {
+        63 - self.value.trailing_zeros()
+    }
+
     #[inline(always)]
     fn refill(&mut self, src: &Source) {
-        let shift = 48 - self.count;
-        // Whole bytes: as many as the window has room for.
-        let bits = (shift & !7) + 8;
+        // Below the marker there is room for whole bytes.
+        let room = self.value.trailing_zeros();
+        let bits = room & !7;
         // SAFETY: eight bytes are in the data from `pos`, or in the tail from
         // no further than 16 into its 24.
         let word = unsafe {
             let from = if self.pos + 8 <= src.data.len() { src.data.as_ptr().add(self.pos) } else { src.tail.as_ptr().add((self.pos - src.tail_from).min(16)) };
             u64::from_be((from as *const u64).read_unaligned())
         };
-        self.value |= (word >> (64 - bits)) << (shift & 7);
-        self.count += bits;
+        // The marker gives way to the bytes, and is set again below them.
+        self.value ^= 1 << room;
+        self.value |= ((word >> (64 - bits)) << (room + 1 - bits)) | (1 << (room - bits));
         self.pos += (bits >> 3) as usize;
     }
 
@@ -87,10 +99,12 @@ impl Window {
     #[inline(always)]
     pub fn read(&mut self, src: &Source, prob: u8) -> bool {
         let split = (self.range * prob as u32 + (256 - prob as u32)) >> 8;
-        if self.count < 0 {
+        if self.value as u32 == 0 {
             self.refill(src);
         }
         let bigsplit = (split as u64) << 56;
+        // The marker and the zeros under it are below the split's bits, so
+        // they never decide this.
         let bit = self.value >= bigsplit;
         let range = if bit {
             self.value -= bigsplit;
@@ -102,7 +116,6 @@ impl Window {
         let shift = range.leading_zeros() - 24;
         self.range = range << shift;
         self.value <<= shift;
-        self.count -= shift as i32;
         bit
     }
 
@@ -140,7 +153,7 @@ impl<'a> BoolDecoder<'a> {
         let kept = data.len().min(8);
         let mut tail = [0; 24];
         tail[..kept].copy_from_slice(&data[data.len() - kept..]);
-        BoolDecoder { win: Window { value: 0, count: -8, range: 255, pos: 0 }, src: Source { data, tail, tail_from: data.len() - kept } }
+        BoolDecoder { win: Window { value: Window::EMPTY, range: 255, pos: 0 }, src: Source { data, tail, tail_from: data.len() - kept } }
     }
 
     /// One boolean whose probability of being false is `prob` in 256.
@@ -177,10 +190,11 @@ impl<'a> BoolDecoder<'a> {
     }
 
     /// Whether more was read than the partition held: the stream is cut short
-    /// or corrupt. As libvpx has it, that is once a refill has asked for a
-    /// byte past the end and the bits of those before it are used up.
+    /// or corrupt. As libvpx has it, that is once the bits used are more than
+    /// the partition's less the eight of its last byte, which the arithmetic
+    /// holds to the end.
     pub fn overran(&self) -> bool {
         let (w, len) = (&self.win, self.src.data.len());
-        w.pos > len && (w.count as i64) < 8 * (w.pos - len) as i64
+        8 * w.pos - w.held() as usize + 8 > 8 * len
     }
 }

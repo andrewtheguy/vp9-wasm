@@ -119,16 +119,21 @@ and `PATENTS`).
   interpolation filters, and the inverse transforms these streams are made
   of, the 4×4 ones and the 8×8 DCT, a row to a lane and each rotation a dot
   product, exact to the plain code for every input. Parsing, the one stage
-  that a tile's bytes keep in
-  order, is what a frame waits on with threads, and is written for V8: a
-  block's coefficients are read with the boolean decoder's registers in
-  locals, in a function of their own, every refill one whole word, since the
-  partition's last bytes are kept again with zeros after them; a transform
-  block with no coefficients, which most are, costs one boolean; the
-  coefficients that are not zero are left as their places and values, which
-  reconstruction puts into a block of zeros and takes out again; and symbols
-  are counted only in a frame whose probabilities adapt to them, which no
-  frame of remotex's or wlshare's does.
+  that a tile's bytes keep in order, is what a frame waits on with threads,
+  and is written for V8: a block's coefficients are read with the boolean
+  decoder's two registers in locals, in a function of their own for each
+  transform size, so that the widths that hang on the size are constants of
+  the code; the bits read ahead carry a marker of their end rather than a
+  count, so the test for a refill is the word's low half being zero, and
+  every refill is one whole word, since the partition's last bytes are kept
+  again with zeros after them; a token of five or more, with its category and
+  extra bits, is read in a function apart, so the loop over the rest stays
+  small enough that V8 keeps the registers in registers; a transform block
+  with no coefficients, which most are, costs one boolean; the coefficients
+  that are not zero are left as their places and values, which reconstruction
+  puts into a block of zeros and takes out again; and symbols are counted
+  only in a frame whose probabilities adapt to them, which no frame of
+  remotex's or wlshare's does.
 - `rust/vp9-web` is the page's module, in the shape of hevc-wasm's:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
