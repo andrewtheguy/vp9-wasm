@@ -1,6 +1,7 @@
 //! A decoded frame: its three planes, and what each of its 8×8 blocks was
 //! coded as, which the loop filter and the next frame's motion vectors read.
 
+use crate::error::{Error, Result};
 use crate::header::Colour;
 
 /// A motion vector in eighths of a sample.
@@ -68,19 +69,33 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub(crate) fn new(width: usize, height: usize) -> Frame {
+    /// The bytes a frame of this size takes: its planes and its blocks' modes.
+    pub(crate) fn bytes(width: usize, height: usize) -> usize {
+        3 * width.next_multiple_of(64) * height.next_multiple_of(64) + width.div_ceil(8) * height.div_ceil(8) * size_of::<ModeInfo>()
+    }
+
+    /// A frame of zeros, or an error where the memory has no room for it.
+    pub(crate) fn new(width: usize, height: usize) -> Result<Frame> {
+        fn zeroed<T: Clone>(len: usize, zero: T) -> Option<Vec<T>> {
+            let mut v = Vec::new();
+            v.try_reserve_exact(len).ok()?;
+            v.resize(len, zero);
+            Some(v)
+        }
         let stride = width.next_multiple_of(64);
         let rows = height.next_multiple_of(64);
         let (mi_cols, mi_rows) = (width.div_ceil(8), height.div_ceil(8));
-        Frame {
+        let plane = || Some(Plane { data: zeroed(stride * rows, 0)?, stride });
+        (|| Some(Frame {
             width,
             height,
             colour: Colour::default(),
-            planes: std::array::from_fn(|_| Plane { data: vec![0; stride * rows], stride }),
-            mi: vec![ModeInfo::default(); mi_cols * mi_rows],
+            planes: [plane()?, plane()?, plane()?],
+            mi: zeroed(mi_cols * mi_rows, ModeInfo::default())?,
             mi_cols,
             mi_rows,
-        }
+        }))()
+        .ok_or_else(|| Error::unsupported(format!("a {width}x{height} frame, which the memory has no room for")))
     }
 }
 
