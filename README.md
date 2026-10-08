@@ -167,6 +167,32 @@ the whole process and do not depend on the load. Per frame:
 | a Mac screen recording, 3456×2234, 200 frames | 1 | 347.4 → 340.4 | 174.7 → 169.8 | 59.3 → 58.2 |
 | | 4 | 346.9 → 340.7 | 177.9 → 174.4 | 16.8 → 17.1 |
 
+Against libvpx, as release 0.0.5 under Bun and ffmpeg 7.1's `libvpx-vp9`
+decoder (libvpx 1.15.0) on the same captures, the same cores, alternated,
+medians of three rounds; the cycles are each whole process's, the module's ms
+its own clock's mean over the frames and libvpx's its process's wall time
+over them:
+
+| Capture | Threads | M cycles, libvpx | M cycles, module | Mean ms, libvpx | Mean ms, module |
+|---|---|---|---|---|---|
+| desktop | 1 | 17.8 | 20.5 | 5.9 | 6.8 |
+| | 4 | 18.3 | 22.0 | 5.5 | 3.9 |
+| a Mac's | 1 | 32.2 | 39.5 | 10.0 | 12.5 |
+| | 4 | 32.9 | 41.3 | 9.0 | 6.9 |
+| a shader animation | 1 | 46.3 | 53.5 | 14.4 | 16.7 |
+| | 4 | 46.9 | 55.9 | 12.7 | 9.8 |
+| a Mac screen recording | 1 | 123.1 | 164.3 | 37.8 | 51.1 |
+| | 4 | 127.8 | 169.0 | 24.1 | 16.8 |
+
+On one thread libvpx, in AVX2, takes 13% to 25% fewer cycles a frame than
+the module in 128-bit vectors. With four threads a stream of one tile column
+gives libvpx's tile threads nothing to split, and it only filters on a
+worker of its own while one thread parses and reconstructs: on the recording
+its four threads keep 1.7 cores busy (8.9 s of user time in 5.3 s of wall).
+The module parses on one thread and reconstructs and filters by rows on the
+others, so its frame takes more cycles and less time, a third to a half
+less.
+
 On these streams a frame is some hundred thousand tokens in tens of thousands
 of transform blocks, most of them 4×4 and six to nine in ten with no
 coefficient at all, so what a transform block costs before its first token
