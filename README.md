@@ -147,39 +147,41 @@ and `PATENTS`).
   function names. Profiles and logs go under `tmp/`.
 
 The comparison is between two builds of the module under Bun: as it is, and
-release 0.0.2. They ran on a six-core x86 workstation, alternately on the
+release 0.0.3. They ran on a six-core x86 workstation, alternately on the
 same cores, one for one thread and four for four, once the host was quiet;
 the medians of three rounds are shown. The cycle counts are `perf stat`'s for
 the whole process and do not depend on the load. Per frame:
 
 | Capture | Threads | M instructions | M cycles | Median ms |
 |---|---|---|---|---|
-| desktop, 1440×900, 665 frames | 1 | 46.7 → 43.2 | 22.9 → 21.3 | 5.9 → 5.1 |
-| | 4 | 46.4 → 42.8 | 24.5 → 23.0 | 3.4 → 3.1 |
-| a Mac's, 1440×900, 743 frames | 1 | 94.4 → 84.4 | 47.1 → 42.8 | 14.6 → 13.1 |
-| | 4 | 94.4 → 84.3 | 49.0 → 44.3 | 8.0 → 7.2 |
-| a shader animation, 1728×902, 822 frames | 1 | 127.6 → 112.1 | 64.5 → 57.4 | 20.9 → 18.2 |
-| | 4 | 127.7 → 112.1 | 66.9 → 59.6 | 11.4 → 10.3 |
-| a Mac screen recording, 3456×2234, 200 frames | 1 | 378.4 → 347.1 | 184.7 → 173.4 | 64.0 → 59.4 |
-| | 4 | 378.1 → 347.4 | 189.7 → 176.6 | 20.6 → 18.2 |
+| desktop, 1440×900, 665 frames | 1 | 43.2 → 42.1 | 21.6 → 21.2 | 5.7 → 5.4 |
+| | 4 | 42.9 → 41.8 | 23.0 → 22.6 | 2.9 → 2.8 |
+| a Mac's, 1440×900, 743 frames | 1 | 84.5 → 83.0 | 43.3 → 42.5 | 13.8 → 13.3 |
+| | 4 | 84.5 → 82.8 | 44.0 → 43.9 | 6.7 → 6.8 |
+| a shader animation, 1728×902, 822 frames | 1 | 112.2 → 111.3 | 58.2 → 58.2 | 18.9 → 18.8 |
+| | 4 | 112.1 → 111.2 | 59.1 → 59.6 | 9.7 → 9.8 |
+| a Mac screen recording, 3456×2234, 200 frames | 1 | 347.4 → 340.4 | 174.7 → 169.8 | 59.3 → 58.2 |
+| | 4 | 346.9 → 340.7 | 177.9 → 174.4 | 16.8 → 17.1 |
 
 On these streams a frame is some hundred thousand tokens in tens of thousands
 of transform blocks, most of them 4×4 and six to nine in ten with no
 coefficient at all, so what a transform block costs before its first token
 counts for as much as the tokens do. On one thread the loop filter is a
-quarter to a third of the time, parsing a quarter to two fifths, the
-whole-sample copies of the still blocks a tenth, and the inverse transforms,
-now by vector, a thirtieth. With threads a frame of one tile column waits on
-its parsing, which is why what the parsing gained the four-thread times
-gained whole. Of the steps since 0.0.2: the transforms by vector were 4% to
-6% of the cycles, and the parser's end marker, large tokens apart and
-function per transform size, 3% to 5% together, where the first two alone
-were nothing and a loss. Filtering two edges that lie end to end in one
-vector, sixteen positions at a time, was measured and is not done: a third to
-four fifths of the wider edges have the same samples across them and leave
-after their loads, which two together seldom both do; nor are the edge
-kernels functions of their own, which cost 4% more instructions for no fewer
-cycles. What it does not do yet, with what was measured on the way, is in
+quarter to a third of the time, parsing a quarter to two fifths, the inverse
+transforms a thirtieth, and the copy each row of 64×64 blocks of an inter
+frame starts as, the last frame's rows, 3% to 7%. A still block, a zero
+motion vector from the last frame and no residual, which is most of a
+screen's area, is then no reconstruction at all, where its own whole-sample
+copy had been a tenth of the time. With threads a frame of one tile column
+waits on its parsing, which is why the four-thread times move little.
+Measured and not done: a row copying only its still blocks, and a pooled
+buffer keeping track of which blocks are the last frame's still so that a
+row copies less. The whole row is one sequential pass that also brings the
+reference's lines into cache for the blocks that move, and telling a block
+unchanged costs about what copying it does. Before 0.0.3, filtering two
+edges that lie end to end in one vector and the edge kernels as functions of
+their own were measured and are not done either. What it does not do yet,
+with what was measured on the way, is in
 [docs/remaining.md](docs/remaining.md).
 
 To benchmark on a busy host, pin both builds to the same cores (`taskset`),

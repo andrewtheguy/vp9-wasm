@@ -17,10 +17,11 @@ Profiled as the module under Node on one thread. Shares of a frame:
 
 | function | desktop | Mac | shader | what it is |
 |---|---|---|---|---|
-| the loop filter (`decode_rows`'s filter closure) | 31% | 30% | 27% | the masks of a 64×64 block from its modes, and the edge kernels inlined |
+| the loop filter (`decode_rows`'s filter closure) | 31% | 30% | 26% | the masks of a 64×64 block from its modes, and the edge kernels inlined |
 | `decode_coefs`, with `large_token` | 20% | 23% | 30% | a transform block's tokens after the first |
-| `convolve::predict` | 11% | 8% | 7% | nearly all of it the whole-sample copy of a still block, its 64-wide stores waiting on memory |
 | `Recon::block` | 7% | 8% | 8% | the walk over a block's transform blocks, the coefficients into place and out again, intra prediction |
+| the row copy (`memory.copy`, libc's `memcpy`) | 6.8% | 2.6% | 2.9% | each row of 64×64 blocks of an inter frame started as the last frame's rows (1 below) |
+| `convolve::predict` | 4.7% | 5.5% | 5.5% | the whole-sample copies of the blocks that move or predict from another reference, and the dispatch to the sub-sample filters |
 | `tokens` | 4% | 8% | 9% | the first boolean of each transform block, and its contexts |
 | `Tile::block` | 4% | 3% | 2.5% | a block's modes and motion vectors, and the mode grid filled |
 | `find_mv_refs` | 2.4% | 2% | 1.6% | |
@@ -40,46 +41,66 @@ transform blocks, 31K coded, and 26K 8×8; 144K kernel calls, 37% leaving
 early. Every capture is one tile column, so a frame's parsing is one
 thread's whatever the pool, and it is what the four-thread time waits on.
 
-### 1. The still blocks, and the copy each one is
+### 1. The still blocks, and the copy each one was
 
 Nearly every block of a screen is an inter block with a zero motion vector
 from the last frame and no residual: 57% of the desktop capture's area, 51%
-of the Mac's, 31% of the shader's. Each such block is a whole-sample copy
-from the reference in `convolve::predict`, and that is where that function's
-share goes: on the desktop a frame copies 2.3 MB in blocks at 2.7 GB/s, the
-64-wide stores stalling on lines not in cache. hevc-wasm's two steps apply
-here and are the next work:
+of the Mac's, 31% of the shader's. Each such block was a whole-sample copy
+from the reference in `convolve::predict`, 2.3 MB a frame on the desktop in
+blocks at 2.7 GB/s, the 64-wide stores stalling on lines not in cache. Now
+each row of 64×64 blocks of an inter frame starts as the last frame's rows,
+copied in one sequential pass before the row waits on the row above
+(`Recon::start_row`), and a still block costs nothing in reconstruction: no
+dispatch, no strided copy. The captures are 1440×900, whose height is not a
+multiple of 8: a still block that crosses the frame's bottom or right edge
+is predicted in libvpx from the reference's edge replicated
+(`extend_and_predict`), and the samples beyond the edge are read by the
+intra prediction and the loop filter of the blocks after it, so the row
+replicates the edge row and column over the strip beyond the frame before
+its blocks are made. Per frame on one thread, 0.0.3 against this: the
+desktop capture 21.6 → 21.2 M cycles, the Mac's 43.3 → 42.5, the shader
+animation 58.2 → 58.2, the recording 174.7 → 169.8; the copy is 6.8% of the
+desktop's cycles, 2.6% of the Mac's and 2.9% of the shader's, in libc's
+`memcpy` under `memory.copy`.
 
-- **Each row of 64×64 blocks starts as the last frame's rows**, copied in
-  one sequential pass before the row waits on the row above, so a still
-  block costs nothing in reconstruction: no dispatch, no strided copy.
-- **Most of that copy is not made.** A pooled buffer still holds the frame it
-  was decoded as, known by a serial number, and each frame records per 64×64
-  block whether it left the block as the last frame had it: every block in
-  it still and skipped, and no loop-filter kernel that wrote into it. A free
-  buffer holding a frame the last frame descends from, parent by parent, is
-  that frame already wherever no frame on the way changed the block, and a
-  row copies only the runs of blocks changed. Measured natively, counting
-  the 64×64 blocks that come out identical to the frame before, filter
-  included: 57% of the desktop capture's, 42% of the Mac's, 28% of the
-  shader's, which is all but a few hundredths of the blocks whose modes say
-  still. The buffer two frames back is the free one in the usual steady
-  state (last, golden and the shown picture held), so the chain is one step.
+hevc-wasm's second step, **most of that copy not made**, was built and
+measured three ways and is slower each way, so it is not to be tried again
+as it was (`tmp/logs/buffer-reuse-kernels.patch` and
+`tmp/logs/buffer-reuse-settle.patch` hold two of them, on top of the row
+copy). A pooled buffer keeps the serial of the frame it was decoded as, each
+frame records per 64×64 block whether it left the block as the last frame
+had it, and a free buffer holding a frame the last frame descends from is
+that frame already wherever no frame on the way changed the block, so a row
+copies only the runs of blocks changed. What VP9 adds is that a skipped
+block's own left and top edges are deblocked whenever the frame's filter
+level is not zero, which it never is on these captures, so whether a still
+block came out unchanged is known only after the filter:
 
-Two things VP9 adds to hevc-wasm's version. A skipped block's own left and
-top edges are still deblocked when the frame's filter level is not zero,
-which it never is on these captures, so a still block is unchanged only
-where the kernels on its edges left early or found nothing to do; the
-kernels must say whether they wrote, and the block, the one to its left and
-the one above it be marked when they did. And the captures are 1440×900,
-whose height is not a multiple of 8: a still block that crosses the frame's
-bottom or right edge is predicted in libvpx from the reference's edge
-replicated (`extend_and_predict`), and the samples beyond the edge are read
-by the intra prediction and the loop filter of the blocks after it, so a
-row started as the last frame's must replicate the edge row and column over
-the strip beyond the frame before its blocks are made. Expected: most of
-`convolve::predict`'s share on one thread, nothing on four, where the frame
-waits on its parsing.
+- **Each kernel reporting which side it changed a shown sample on**, and the
+  block, the one to its left and the one above marked by it. 42% of the
+  desktop's blocks, 27% of the Mac's and 23% of the shader's came out kept,
+  short of the 57%, 42% and 28% that are identical to the frame before,
+  since a vertical kernel changes samples that the horizontal kernel below
+  changes back. The
+  frame cost more than it saved: the desktop 45.7 M instructions and 22.4 M
+  cycles against 42.1 and 21.2, the Mac's 89.6 and 44.9 against 83.0 and
+  42.5, the recording 372 and 181 against 340 and 170. The report's own
+  instructions were not it: made conditional on a side's block still
+  counting, which leaves it out of nearly every call, nothing changed.
+- **A wholly still block compared with the reference once** its last kernel
+  has run, the kernels as they were. The comparison of a block costs about
+  what its copy does, 3.8% of the desktop's instructions, and the frame
+  22.6 M cycles against 20.8. Under Node with every function compiled
+  optimized up front, the gap is the comparison's alone; the rest of what
+  the counts show is tier-up, which both engines start a frame's work in.
+- **No tracking, a row copying only its still blocks**, by runs, with
+  `memcpy` or by vector: slower than the whole row, 21.1 M cycles against
+  20.8 on the desktop, 42.1 against 41.8 on the Mac's, 168.8 against 166.4
+  on the recording. The whole row is one sequential pass that also brings
+  the reference's lines into cache for the blocks that move.
+
+The copy is the bound on all three, 6.8% of the desktop's cycles and less
+elsewhere, and on four threads the frame waits on its parsing anyway.
 
 ### 2. Parsing
 
