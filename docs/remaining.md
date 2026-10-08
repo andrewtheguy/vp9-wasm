@@ -222,37 +222,48 @@ Every frame of the captures has a filter level of 7 to 9 and a sharpness of
 0: libvpx at this speed takes the level from the quantizer, never below 4
 between keyframes, a light filter that still visits every edge. Its
 `VP9E_SET_DISABLE_LOOPFILTER` at 2 makes the level 0, at which a frame is
-not filtered at all. Each capture was coded again by `screen-vp9` 0.0.8
-with the filter and without it, at the capture's quality and threads, the
-recordings by their first 300 frames, and the module decodes each of the
-twelve streams as libvpx does. The bytes are without the filter over with
-it, the PSNR libvpx's decoder's against the planes that went in, the cycles
-a frame on one thread and the milliseconds a frame on four:
+not filtered at all. Measured on what the remotex gateway itself wrote on
+2026-10-08, one desktop of four panes at eight sizes: a Windows desktop
+over RDP at five and a virtual Mac at three. The first 300 frames of each
+were coded again by `screen-vp9` with the filter and without it, at
+quality 90 on four threads as the gateway codes them, and the module
+decodes each of the sixteen streams as libvpx does. The bytes are without
+the filter over with it, the PSNR libvpx's decoder's against the planes
+that went in, the cycles a frame on one thread and the mean milliseconds a
+frame on four:
 
-| | bytes | luma dB | chroma dB | encode | M cycles | ms on four |
-| --- | --- | --- | --- | --- | --- | --- |
-| desktop | +2.3% | 55.09 → 54.47 | 57.13 → 56.15 | −11% | 21.0 → 13.9 | 3.7 → 3.1 |
-| Mac | +4.5% | 47.12 → 46.20 | 51.89 → 50.18 | −5% | 40.1 → 26.5 | 6.0 → 5.9 |
-| shader animation | +5.4% | 50.23 → 49.54 | 53.78 → 52.58 | −4% | 53.6 → 38.2 | 8.1 → 8.0 |
-| 3456×1804 desktop | +2.4% | 52.40 → 51.93 | 56.67 → 55.84 | −5% | 234.9 → 174.3 | 27.9 → 19.0 |
-| recording, q90 | +5.0% | 50.34 → 49.48 | 55.04 → 53.29 | −2% | 156.3 → 94.2 | 17.5 → 11.3 |
-| recording, q100 | +8.2% | 51.53 → 50.82 | 55.84 → 54.62 | −2% | 212.3 → 139.2 | 23.3 → 16.4 |
+| | tile columns | bytes | luma dB | chroma dB | encode | M cycles | ms on four |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows, 1280×800 | 1 | +3.1% | 46.69 → 45.81 | 50.77 → 49.29 | −8% | 36.5 → 25.9 | 7.5 → 7.2 |
+| Windows, 1440×900 | 2 | +3.7% | 47.53 → 46.58 | 51.63 → 50.12 | −6% | 39.8 → 27.6 | 5.8 → 5.7 |
+| Windows, 1600×1000 | 2 | +3.7% | 47.59 → 46.60 | 51.63 → 50.11 | −6% | 47.3 → 33.0 | 6.4 → 6.1 |
+| Windows, 1920×1080 | 2 | +3.6% | 47.35 → 46.49 | 51.99 → 50.53 | −5% | 72.0 → 50.6 | 9.0 → 9.8 |
+| Mac, 2560×1600 | 2 | +4.4% | 49.81 → 49.00 | 55.24 → 53.60 | −6% | 87.7 → 55.3 | 10.3 → 9.5 |
+| Mac, 2880×1800 | 4 | +3.6% | 49.99 → 48.61 | 53.57 → 51.36 | −7% | 79.1 → 46.8 | 10.4 → 6.4 |
+| Windows, 3456×2168 | 4 | +3.3% | 50.41 → 49.78 | 55.44 → 54.12 | −3% | 190.3 → 134.3 | 21.3 → 14.2 |
+| Mac, 3840×2160 | 4 | +5.5% | 50.64 → 49.82 | 56.03 → 54.55 | −3% | 154.5 → 100.1 | 17.4 → 12.1 |
 
-One thread decodes in 26% to 40% fewer cycles. Four gain a third at 3456
-wide, where there are four tiles to parse at once, and little at 1440,
-where there are two and the frame waits on their parsing: the shader
-animation's own stream with the filter left out of the module is 7.7 ms
-for 8.1, and its 5% more bytes take that back. The filter is worth more to
-the picture than its level suggests, since every later frame predicts from
-what it smoothed. At the same luma PSNR the Mac capture without the filter
-is quality 97 for 90, 34% more bytes, and then 31.4 M cycles a frame for
-40.1; the shader animation without it at quality 100 has a PSNR between
-those of 98 and 100 with it, which are 18% and 5% fewer bytes. The
-3456-wide desktop coded in two tile columns is 27.4 ms on four threads for
-29.0. So `screen-vp9` 0.0.9 leaves the filter out of a 4:4:4 stream in
-four tile columns or more, 2880 wide on four threads, where a decoder's
-threads were waiting on it, and keeps it elsewhere. Not measured: a width
-between 1728 and 3456, and the picture by eye.
+One thread decodes in 29% to 41% fewer cycles at every size. Four gain 31%
+to 38% of the time where the stream is in four tile columns and nothing to
+speak of where it is in one or two, up to 2560 wide, because there the
+frame waits on the parsing of its columns and the filter was not what held
+it. The line falls between 2560 and 2880, where `screen-vp9` goes from two
+columns to four, and the two neighbours show it: 9.5 ms for 10.3 against
+6.4 for 10.4. The earlier captures, a wlshare desktop and animation and a
+Mac screen recording, said the same, and gave two more figures. A
+3456×1804 desktop coded in two columns instead of four is 27.4 ms on four
+threads for 29.0, so it is the columns and not the width. And the filter
+is worth more to the picture than its level suggests, since every later
+frame predicts from what it smoothed: at the same luma PSNR a 1440×900 Mac
+capture without the filter is quality 97 for 90, 34% more bytes, and then
+31.4 M cycles a frame for 40.1.
+
+So `screen-vp9` 0.0.9 leaves the filter out of a 4:4:4 stream in four tile
+columns or more, 2880 wide on four threads, and keeps it elsewhere. Not
+measured: more than four decoding threads, which a page with eight cores
+gets, and the picture by eye. Untried: four columns under 2880 wide with
+the filter left out, which the 2560 capture's 55.3 M cycles on one thread
+say could be worth its bytes.
 
 ### 4. The rest
 
