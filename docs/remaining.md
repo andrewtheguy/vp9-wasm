@@ -247,9 +247,12 @@ the picture than its level suggests, since every later frame predicts from
 what it smoothed. At the same luma PSNR the Mac capture without the filter
 is quality 97 for 90, 34% more bytes, and then 31.4 M cycles a frame for
 40.1; the shader animation without it at quality 100 has a PSNR between
-those of 98 and 100 with it, which are 18% and 5% fewer bytes. Not done: it is a dial of
-`screen-vp9`'s to add, for a stream whose decoder is what holds the frame
-rate and whose link has the bytes.
+those of 98 and 100 with it, which are 18% and 5% fewer bytes. The
+3456-wide desktop coded in two tile columns is 27.4 ms on four threads for
+29.0. So `screen-vp9` 0.0.9 leaves the filter out of a 4:4:4 stream in
+four tile columns or more, 2880 wide on four threads, where a decoder's
+threads were waiting on it, and keeps it elsewhere. Not measured: a width
+between 1728 and 3456, and the picture by eye.
 
 ### 4. The rest
 
