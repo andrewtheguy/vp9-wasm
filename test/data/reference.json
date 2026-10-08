@@ -81,6 +81,26 @@
         "35819bf6d546d908d4c52784890d6b87"
       ]
     },
+    "tile-rows-62x130": {
+      "sha256": "978d742b22ba89c696952215b89dafcf463d5f7cb7ecffbb481b2c0e5d819c08",
+      "width": 62,
+      "height": 130,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "a142baf64f3161e3d187e59d052a2a5c",
+        "6e43af182519b09a00b4e4b485cdc4d4",
+        "ca3564779229a005892d3d98365c2309",
+        "7d03e9be9f6f4daef8c3db9b62197cfe",
+        "e0b8c3cf709b2f3c0f2f8267177d43fd",
+        "8696401e4d6b685a24f7086bf33619c6",
+        "163a3dc944423a1a7844c01b1ba2fddf",
+        "908bd637c78ba100433a0c15d877f332",
+        "c805e64261202cb0213da307c06ebb14",
+        "02fd60145336ae02510dd46bb5cd7d71",
+        "7ebb7394bd7299ffe20067cb23b61635",
+        "7efc5146398ed176f40b51e707560ed9"
+      ]
+    },
     "still-352x256": {
       "sha256": "501a8800fa74225483f46f1d9f6805b89fa699b96b187bce7ec3fd6784d63dca",
       "width": 352,

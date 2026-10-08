@@ -86,12 +86,14 @@ impl Decoder {
 
     /// Room for a frame of `size` bytes in this module's memory, where the
     /// page writes it before [`Self::decode`]. Good until that call. The
-    /// previous picture is released here.
-    pub fn input(&mut self, size: usize) -> *mut u8 {
+    /// previous picture is released here. Throws for a size the memory has
+    /// no room for.
+    pub fn input(&mut self, size: usize) -> Result<*mut u8, JsError> {
         self.held = None;
         self.input.clear();
+        self.input.try_reserve_exact(size).map_err(|_| JsError::new(&format!("no room for a frame of {size} bytes")))?;
         self.input.resize(size, 0);
-        self.input.as_mut_ptr()
+        Ok(self.input.as_mut_ptr())
     }
 
     /// Decode the frame written into [`Self::input`]: true when it is one

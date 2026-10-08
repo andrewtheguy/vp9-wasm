@@ -42,6 +42,7 @@ const DECODED = [
   "screen-352x256",
   "tiles-608x130",
   "tile-rows-544x200",
+  "tile-rows-62x130",
   "still-352x256",
   "keyframes-330x194",
   "lossless-160x96",
@@ -153,6 +154,24 @@ describe("what it refuses", () => {
       expect(() => decodeFrame(loaded, d, new Uint8Array(0))).toThrow();
       // The second frame alone has nothing to be predicted from.
       expect(() => decodeFrame(loaded, d, fixture.frames[1]!)).toThrow();
+      expect(decodeAll(d, fixture.frames).md5s).toEqual(fixture.md5s);
+    });
+  });
+});
+
+describe("a frame too large for the memory", () => {
+  test("is refused with an error, and the decoder goes on", () => {
+    const fixture = fixtures["screen-330x194"];
+    withDecoder(1, (d) => {
+      let thrown: unknown;
+      try {
+        // The module's memory grows to a gibibyte at most.
+        d.input(1 << 30);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect(thrown).not.toBeInstanceOf(WebAssembly.RuntimeError);
       expect(decodeAll(d, fixture.frames).md5s).toEqual(fixture.md5s);
     });
   });

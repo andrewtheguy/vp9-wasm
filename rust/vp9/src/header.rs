@@ -39,6 +39,8 @@ pub struct FrameHeader {
     pub ref_slots: [usize; 3],
     pub sign_bias: [bool; 4],
     pub size: Size,
+    /// The size to show the frame at, where it states one.
+    pub render: Option<(u32, u32)>,
     pub allow_hp: bool,
     pub interp_filter: u8,
     pub refresh_frame_context: bool,
@@ -106,12 +108,12 @@ fn frame_size(r: &mut BitReader) -> Result<Size> {
     Ok(Size::Coded(w, h))
 }
 
-/// The render size is where a scaled picture would be shown: read past.
-fn render_size(r: &mut BitReader) -> Result<()> {
-    if r.flag()? {
-        r.literal(32)?;
+/// The render size is where a scaled picture would be shown.
+fn render_size(r: &mut BitReader) -> Result<Option<(u32, u32)>> {
+    if !r.flag()? {
+        return Ok(None);
     }
-    Ok(())
+    Ok(Some((r.literal(16)? + 1, r.literal(16)? + 1)))
 }
 
 fn delta_q(r: &mut BitReader) -> Result<i32> {
@@ -142,6 +144,7 @@ pub fn uncompressed(data: &[u8], ref_width: impl Fn(usize) -> Option<u32>) -> Re
         ref_slots: [0; 3],
         sign_bias: [false; 4],
         size: Size::OfRef(0),
+        render: None,
         allow_hp: false,
         interp_filter: 0,
         refresh_frame_context: false,
@@ -174,7 +177,7 @@ pub fn uncompressed(data: &[u8], ref_width: impl Fn(usize) -> Option<u32>) -> Re
         h.colour = Some(colour_444(&mut r, profile)?);
         h.refresh_frame_flags = 0xff;
         h.size = frame_size(&mut r)?;
-        render_size(&mut r)?;
+        h.render = render_size(&mut r)?;
     } else {
         h.intra_only = !h.show_frame && r.flag()?;
         h.reset_frame_context = if h.error_resilient { 0 } else { r.literal(2)? as u8 };
@@ -183,7 +186,7 @@ pub fn uncompressed(data: &[u8], ref_width: impl Fn(usize) -> Option<u32>) -> Re
             h.colour = Some(colour_444(&mut r, profile)?);
             h.refresh_frame_flags = r.literal(8)? as u8;
             h.size = frame_size(&mut r)?;
-            render_size(&mut r)?;
+            h.render = render_size(&mut r)?;
         } else {
             if profile != 1 {
                 return Err(Error::unsupported(format!("profile {profile}, where only profile 1 (8 bits, 4:4:4) is decoded")));
@@ -204,7 +207,7 @@ pub fn uncompressed(data: &[u8], ref_width: impl Fn(usize) -> Option<u32>) -> Re
                 Some(i) => Size::OfRef(i),
                 None => frame_size(&mut r)?,
             };
-            render_size(&mut r)?;
+            h.render = render_size(&mut r)?;
             h.allow_hp = r.flag()?;
             h.interp_filter = if r.flag()? { SWITCHABLE } else { [1, 0, 2, 3][r.literal(2)? as usize] };
         }

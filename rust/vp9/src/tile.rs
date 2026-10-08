@@ -215,7 +215,10 @@ impl<'a> Tile<'a> {
     /// having been parsed.
     pub fn parse_row(&mut self, sb_row: usize) -> Result<()> {
         let mi_row = sb_row * 8;
-        if let Some(&(_, data)) = self.data.iter().find(|(start, _)| *start == mi_row) {
+        // Every tile that starts here, in turn: a frame of fewer rows than tile
+        // rows has tiles of no rows, each a partition all the same, and the
+        // last of them is the one this row is in.
+        for &(_, data) in self.data.iter().filter(|(start, _)| *start == mi_row) {
             self.overran()?;
             self.r = BoolDecoder::new(data)?;
             self.started = true;

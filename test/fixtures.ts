@@ -64,6 +64,10 @@ export const SPECS = {
   // Two tile columns, which parse side by side, and two tile rows.
   "tiles-608x130": { size: "608x130", pixFmt: "yuv444p", extra: ["-tile-columns", "1"] },
   "tile-rows-544x200": { size: "544x200", pixFmt: "yuv444p", extra: ["-tile-columns", "1", "-tile-rows", "1"] },
+  // Four tile rows over three rows of 64x64 blocks: three tiles of a row
+  // each, after one of none. One tile column, since libvpx codes one tile row
+  // where it has both more tile columns and more threads than one.
+  "tile-rows-62x130": { size: "62x130", pixFmt: "yuv444p", extra: ["-tile-columns", "0", "-tile-rows", "2"] },
   // A screen mostly still: a patch moves across one frozen picture, and the
   // rest is predicted from the frame before without a residual.
   "still-352x256": {

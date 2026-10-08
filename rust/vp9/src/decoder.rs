@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::error::{Error, Result};
 use crate::frame::Frame;
-use crate::header::{self, FrameHeader, Size, SWITCHABLE, TX_MODE_SELECT};
+use crate::header::{self, Colour, FrameHeader, Size, SWITCHABLE, TX_MODE_SELECT};
 use crate::lf::{Filtered, LoopFilter};
 use crate::probs::{Counts, Probs};
 use crate::tables::{AC_QLOOKUP, DC_QLOOKUP};
@@ -43,6 +43,8 @@ pub struct Decoder {
     /// holds it.
     pool: Vec<Arc<Frame>>,
     contexts: [Probs; 4],
+    /// The colour last stated, which a frame that states none has.
+    colour: Colour,
     lf_ref_deltas: [i8; 4],
     lf_mode_deltas: [i8; 2],
     last: Last,
@@ -65,6 +67,7 @@ impl Decoder {
             refs: Default::default(),
             pool: Vec::new(),
             contexts: Default::default(),
+            colour: Colour::default(),
             lf_ref_deltas: [1, 0, -1, -1],
             lf_mode_deltas: [0, 0],
             last: Last::default(),
@@ -130,6 +133,9 @@ impl Decoder {
                 (f.width, f.height)
             }
         };
+        if let Some((w, h)) = h.render.filter(|&(w, h)| (w as usize, h as usize) != (width, height)) {
+            return Err(Error::unsupported(format!("a {width}x{height} frame to be shown scaled, at {w}x{h}")));
+        }
         // Not their product, which wraps where a `usize` is 32 bits.
         if width > MAX_SAMPLES / height {
             return Err(Error::unsupported(format!("a {width}x{height} frame")));
@@ -181,11 +187,7 @@ impl Decoder {
         let refs_held: [Option<Arc<Frame>>; 3] = std::array::from_fn(|i| if h.intra() { None } else { self.refs[h.ref_slots[i]].clone() });
 
         let mut frame = self.fresh_frame(width, height);
-        if let Some(colour) = h.colour {
-            frame.colour = colour;
-        } else if let Some(r) = &refs_held[0] {
-            frame.colour = r.colour;
-        }
+        frame.colour = h.colour.unwrap_or(self.colour);
         let lf = (h.lf_level != 0).then(|| LoopFilter::new(&h, ref_deltas, mode_deltas));
         let counts = self.decode_rows(&h, tx_mode, &probs, tiles, &mut frame, &refs_held, prev.as_deref(), lf.as_ref())?;
 
@@ -207,6 +209,7 @@ impl Decoder {
             self.contexts[context_idx] = probs;
         }
         (self.lf_ref_deltas, self.lf_mode_deltas) = (ref_deltas, mode_deltas);
+        self.colour = frame.colour;
         let frame = Arc::new(frame);
         for (i, slot) in self.refs.iter_mut().enumerate() {
             if h.refresh_frame_flags & (1 << i) != 0 {
@@ -462,6 +465,67 @@ fn superframe(data: &[u8]) -> Result<Vec<&[u8]>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two frames of a fixture: a keyframe that states BT.709, and a frame
+    /// predicted from it.
+    fn fixture() -> (&'static [u8], &'static [u8]) {
+        let file: &[u8] = include_bytes!("../../../test/data/bt709-full-160x96.ivf");
+        let frame = |at: usize| &file[at + 12..at + 12 + u32::from_le_bytes(file[at..at + 4].try_into().unwrap()) as usize];
+        let key = frame(32);
+        (key, frame(32 + 12 + key.len()))
+    }
+
+    /// The keyframe with its uncompressed header written again: `bits` is
+    /// given the header's bits to make the new one's of.
+    fn reheaded(key: &[u8], bits: impl FnOnce(&[u8]) -> Vec<u8>) -> Vec<u8> {
+        let old = header::uncompressed(key, |_| None).unwrap().header_bytes;
+        let was: Vec<u8> = (0..old * 8).map(|i| key[i >> 3] >> (7 - (i & 7)) & 1).collect();
+        let mut bits = bits(&was);
+        bits.resize(bits.len().next_multiple_of(8), 0);
+        let mut frame: Vec<u8> = bits.chunks(8).map(|byte| byte.iter().fold(0, |v, &b| v << 1 | b)).collect();
+        // The old header's padding may have become a byte of its own.
+        let new = header::uncompressed(&frame, |_| None).unwrap().header_bytes;
+        frame.truncate(new);
+        frame.extend_from_slice(&key[old..]);
+        frame
+    }
+
+    #[test]
+    fn a_frame_that_states_no_colour_has_the_last_one_stated() {
+        let (key, inter) = fixture();
+        // The keyframe again as an intra-only frame that resets the contexts
+        // as a keyframe does, states BT.601 and is kept in no slot: the frame
+        // after it is predicted from the keyframe still.
+        let intra = reheaded(key, |was| {
+            let mut bits = vec![1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1];
+            bits.extend_from_slice(&was[8..32]);
+            bits.extend_from_slice(&[0, 0, 1]);
+            bits.extend_from_slice(&was[35..39]);
+            bits.extend_from_slice(&[0; 8]);
+            bits.extend_from_slice(&was[39..]);
+            bits
+        });
+        let mut d = Decoder::new(1);
+        assert_eq!(d.decode(key).unwrap().unwrap().frame.colour.space, 2);
+        assert!(d.decode(&intra).unwrap().is_none());
+        assert_eq!(d.decode(inter).unwrap().unwrap().frame.colour.space, 1);
+    }
+
+    #[test]
+    fn a_frame_to_be_shown_at_another_size_is_refused_by_name() {
+        let (key, _) = fixture();
+        // The render size follows the frame's, after a flag that it does.
+        let shown_at = |size: &[u8]| {
+            reheaded(key, |was| {
+                assert_eq!(was[71], 0);
+                [&was[..71], &[1], size, &was[72..]].concat()
+            })
+        };
+        let bits = |v: u16| (0..16).rev().map(|i| (v >> i & 1) as u8).collect::<Vec<_>>();
+        assert!(Decoder::new(1).decode(&shown_at(&[bits(159), bits(95)].concat())).unwrap().is_some());
+        let e = Decoder::new(1).decode(&shown_at(&[bits(159), bits(47)].concat())).err().expect("refused");
+        assert_eq!(e, Error::unsupported("a 160x96 frame to be shown scaled, at 160x48"));
+    }
 
     #[test]
     fn a_frame_shown_again_in_one_byte_is_refused_by_name() {
