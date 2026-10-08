@@ -175,10 +175,10 @@ name, and nothing is known to produce them.
 
 - **Malformed input must return an error, never trap.** The fuzz target
   (`rust/vp9/fuzz`, see the README) decodes each input on one thread and on
-  a pool of three and compares. The boolean decoder's end marker and its
-  overrun check are new since the last long run; the target should have
-  hours on them before the next release after this one, and a corpus from
-  the captures' frames.
+  a pool of three and compares. A few minutes on two workers, about 10,000
+  inputs, is the run before a release; the boolean decoder's end marker and
+  its overrun check had that before 0.0.3 and no more. A corpus from the
+  captures' frames would make the same minutes count for more.
 - **The module's vector loops** have only the damaged fixtures of `bun test`
   against them, on one thread and four. The transforms were checked exact
   to the plain code on 120,000 random blocks under Node
