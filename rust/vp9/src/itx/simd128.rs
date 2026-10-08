@@ -47,14 +47,6 @@ fn rot(a: v128, b: v128, c0: i32, c1: i32) -> (v128, v128) {
     (dot(lo, hi, pair(c0, -c1)), dot(lo, hi, pair(c1, c0)))
 }
 
-/// `rot(-a, b, c0, c1)`: the negation folded into the constants, since `-a`
-/// may not fit a lane.
-#[inline(always)]
-fn rot_neg(a: v128, b: v128, c0: i32, c1: i32) -> (v128, v128) {
-    let (lo, hi) = pairs(a, b);
-    (dot(lo, hi, pair(-c0, -c1)), dot(lo, hi, pair(-c1, c0)))
-}
-
 /// The plain `half`: `(rs((a + b)*C16), rs((a - b)*C16))`.
 #[inline(always)]
 fn half(a: v128, b: v128) -> (v128, v128) {

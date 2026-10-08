@@ -149,9 +149,9 @@ and whose kernels filter two rows of 8×8 blocks at once.
   runtime, 0.8% of the desktop capture; whole words as hevc-wasm writes them
   would do, and `ModeInfo` could be half its size, since only a block under
   8×8 has four motion vectors.
-- **Four threads.** Against one: the desktop capture 2.0×, the Mac's 2.0×,
-  the shader animation 1.75×, the Mac recording 3.2×, all bound by the one
-  tile's parsing (2 above).
+- **Four threads.** Against one, by the README table's medians: the desktop
+  capture 1.65×, the Mac's 1.8×, the shader animation 1.8×, the Mac
+  recording 3.3×, all bound by the one tile's parsing (2 above).
 
 ### Elsewhere
 
