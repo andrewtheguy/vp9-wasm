@@ -261,9 +261,26 @@ capture without the filter is quality 97 for 90, 34% more bytes, and then
 So `screen-vp9` 0.0.9 leaves the filter out of a 4:4:4 stream in four tile
 columns or more, 2880 wide on four threads, and keeps it elsewhere. Not
 measured: more than four decoding threads, which a page with eight cores
-gets, and the picture by eye. Untried: four columns under 2880 wide with
-the filter left out, which the 2560 capture's 55.3 M cycles on one thread
-say could be worth its bytes.
+gets, and the picture by eye. The first 300 frames are also the quiet end
+of each capture, whose later frames run to five and ten times the bytes.
+
+Four columns under 2880 wide were tried on the 2560×1600 capture, the same
+300 frames, the columns forced in a copy of `screen-vp9`:
+
+| columns, filter | MB | luma dB | encode ms | M cycles | ms on four |
+| --- | --- | --- | --- | --- | --- |
+| two, on | 15.21 | 49.81 | 42.9 | 84.3 | 9.3 |
+| two, off | 15.87 | 49.00 | 40.4 | 54.8 | 8.3 |
+| four, on | 15.22 | 49.79 | 38.8 | 85.4 | 9.0 |
+| four, off | 15.89 | 48.99 | 37.0 | 55.5 | 6.1 |
+
+The columns themselves cost 0.1% of the bytes, nothing of the picture and
+1% of one thread's cycles, and the encoder's four threads code them a
+tenth faster. With the filter the decoder's four threads get nothing from
+them; without it the frame is 6.1 ms for 9.3, a third less, as from 2880
+wide. So a 2560-wide stream in four columns without the filter would trade
+4.5% of the bytes and 0.8 dB for that third. That is `screen-vp9`'s tile
+rule to change and is not done.
 
 ### 4. The rest
 
