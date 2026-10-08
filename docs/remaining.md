@@ -158,26 +158,73 @@ test in `Recon::block` was not, and is gone (4 below).
 
 ### 3. The loop filter
 
-A quarter to a third of a frame on one thread, in the edge kernels, which
-are vectors already with the eight positions of an edge in the low eight
-lanes and leave early where the samples are the same across the edge. About
-83 cycles a call on average, the early-outs included.
+34% to 43% of a frame's cycles on one thread, taken by leaving parts of it
+out of the module (which changes the picture, so the parts are near and not
+exact). Per frame, in M cycles:
 
-Measured and no faster: the six kernels as functions of their own rather
-than inlined into the filter's loop, 4% more instructions and no fewer
-cycles, although the loop is a 5,000-instruction function full of spills;
-and, before this release, two edges that lie end to end in one vector
-(`tmp/lf-pair-kept` holds that version), since a third to four fifths of the
-wider edges leave after their loads and two together seldom both do. On the
-Mac capture, where the narrow four-tap filter is 45K of 103K calls and only
-a quarter leave early, that pairing may read differently; it was not
-measured per filter width.
+| | desktop | Mac | shader | recording |
+|---|---|---|---|---|
+| the frame | 20.3 | 39.4 | 53.6 | 159.3 |
+| the masks of each 64×64 block, and the walk over them | 0.7 | 0.8 | 0.8 | 4.7 |
+| the kernels of the vertical edges | 3.3 | 7.4 | 8.8 | 35.2 |
+| the kernels of the horizontal edges | 2.5 | 4.9 | 6.5 | 25.2 |
 
-Untried: the masks settled as the blocks are parsed, as hevc-wasm's
-boundary strengths are, instead of the scan of the 64 modes of a block at
-filter time (about 0.6% of the instructions, so by itself small); and
-libvpx's own `ss00` path for 4:4:4, whose masks are 64-bit words per block
-and whose kernels filter two rows of 8×8 blocks at once.
+So it is the kernels, which are vectors already with the eight positions of
+an edge in the low eight lanes, and leave early where the samples are the
+same across the edge. Per frame and direction, by the widest filter an edge
+may take and what it came to:
+
+| | desktop | Mac | shader |
+|---|---|---|---|
+| narrow edges | 1.7K | 30K | 35K |
+| of them filtered | 78% | 86% | 86% |
+| 8-sample edges | 21K | 12.5K | 31K |
+| of them the same across the edge | 58% | 34% | 51% |
+| of them with a position the 7-tap filter takes | 29% | 45% | 35% |
+| 16-sample edges | 6.5K | 8.5K | 5.5K |
+| of them the same across the edge | 75% | 57% | 67% |
+
+Measured and no faster:
+
+- The six kernels as functions of their own rather than inlined into the
+  filter's loop: 4% more instructions and no fewer cycles, although the loop
+  is a 5,000-instruction function full of spills.
+- Two edges that lie end to end in one vector, whatever their widths
+  (`tmp/lf-pair-kept` holds that version): on this tree 17% more
+  instructions and 12% more cycles on the Mac capture, 23% and 17% on the
+  desktop's. The flat filters sum in 16-bit lanes, so sixteen positions are
+  two vectors of them and nothing is saved, and a pair leaves early only
+  when both edges would.
+- Only the narrow edges paired, whose arithmetic is all in bytes and so
+  costs the same for sixteen positions as for eight. Two side by side along
+  a horizontal edge, in the walk as it is: 0.8 M fewer instructions a frame
+  on the Mac capture and the shader animation, which is what a narrow edge
+  costs (about 60 instructions), and 0.2 and 0.1 M fewer cycles of 39.4 and 53.5;
+  none on the others. Two one above the other along a vertical edge need
+  the walk to take two rows of blocks at a time, since along a row each
+  edge reads what the one before it wrote; that walk with the pairs is 3 M
+  more instructions a frame on the desktop capture and the shader animation
+  and 21 M more on the recording, under Bun, with or without the kernels
+  inlined, and without the pairs it is 2 M fewer on the Mac capture and 2 M
+  more on the recording: the function's size and what the engine makes of
+  it decide more than the arithmetic saved.
+
+What is left in the decoder is the 8- and 16-sample edges that do work,
+whose cost is their transposes and their 16-bit sums. Untried: the masks
+settled as the blocks are parsed, as hevc-wasm's boundary strengths are,
+instead of the scan of the 64 modes of a block at filter time, which is at
+most the masks' row above; and libvpx's own `ss00` path for 4:4:4, whose
+kernels filter two rows of 8×8 blocks at once, which the pairs above say
+is no gain here.
+
+The larger step is not the decoder's. Every frame of the captures has a
+filter level of 7 to 9 and a sharpness of 0, a light filter that still
+visits every edge, and libvpx's `VP9E_SET_DISABLE_LOOPFILTER` makes the
+level 0, at which a frame is not filtered at all: the frame without the
+filter is 13.3 M cycles of the desktop capture's 20.3, 25.6 of the Mac's
+39.4, 36.9 of the shader animation's 53.6 and 90.8 of the recording's
+159.3. What it costs the picture at these qualities is `screen-vp9`'s to
+measure.
 
 ### 4. The rest
 
