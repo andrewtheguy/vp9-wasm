@@ -250,6 +250,11 @@ impl<'a> Recon<'a> {
                 block[0] = dc;
                 itx::inverse_add(tx, tx_type, lossless, &block[..n * n], 1, dst, stride);
                 block[0] = 0;
+            } else if tx == 0 {
+                // A 4×4 is left whole, as the transform takes it.
+                let Some(whole) = buf.coeffs.get(self.next_coeff..self.next_coeff + 16) else { return };
+                self.next_coeff += 16;
+                itx::inverse_add(0, tx_type, lossless, whole, eob as usize, dst, stride);
             } else {
                 let Some(&count) = buf.coeffs.get(self.next_coeff) else { return };
                 let Some(pairs) = buf.coeffs.get(self.next_coeff + 1..self.next_coeff + 1 + 2 * count as usize) else { return };

@@ -194,10 +194,14 @@ and whose kernels filter two rows of 8×8 blocks at once.
   the next place. Per frame on one thread: the desktop capture 20.9 → 20.6 M
   cycles, the Mac's 41.9 → 40.7, the shader animation 60.3 → 58.4, the
   recording 167.8 → 164.4; on four threads 22.4 → 22.1, 43.9 → 42.5,
-  62.7 → 61.0 and 172.2 → 169.6. What remains of it is the coefficients
-  scattered into a block of zeros and cleared again, which for a 4×4 could
-  be built into the two vectors the transform takes, and the intra
-  predictors, which are plain code (intra blocks are 0.6% to 6% of the area).
+  62.7 → 61.0 and 172.2 → 169.6. Then the 4×4's coefficients, nearly all
+  of them, stopped being scattered into a block of zeros and cleared again:
+  the parser zeroes sixteen and writes each in its place, and the transform
+  loads its two vectors from the row's buffer. Against the step before, on
+  one thread: 20.9 → 20.4, 41.0 → 39.5, 55.5 → 53.4, 159.3 → 157.5; on four
+  22.7 → 22.4, 42.5 → 41.4, 57.7 → 55.8, 163.2 → 162.2. What remains of it
+  is the larger blocks' scatter, few, and the intra predictors, which are
+  plain code (intra blocks are 0.6% to 6% of the area).
 - **The fills.** Each `fill` of a few bytes of the context arrays, and of the
   32-byte `ModeInfo` over a block's cells, is a `memory.fill` into V8's
   runtime, 0.8% of the desktop capture; whole words as hevc-wasm writes them

@@ -20,8 +20,9 @@ pub(crate) struct RowBuf {
     /// coefficients, then for each of those in coding order its place (the
     /// plane, the row and the column in 4×4s, as `plane << 8 | row << 4 |
     /// col`), how many coefficients it has in scan order, and its one
-    /// coefficient, or how many of its coefficients are not zero and then,
-    /// for each in scan order, where in the block it is and its value.
+    /// coefficient, or, for a 4×4, all sixteen in place, or how many of its
+    /// coefficients are not zero and then, for each in scan order, where in
+    /// the block it is and its value.
     pub coeffs: Vec<i16>,
 }
 
@@ -975,7 +976,8 @@ unsafe fn large_token(r: &mut Window, src: &Source, p: &[u8; 8], cache: *mut u8)
 /// `decode_coefs`: one transform block's tokens after the first, which said
 /// that it has any. Returns how many it has in scan order, and how much was
 /// written at `out`: the one coefficient of a block of one, which is its
-/// first, or else how many are not zero, and each one's place and value.
+/// first, or, for a 4×4, all sixteen in place, as the transform takes them,
+/// or else how many are not zero, and each one's place and value.
 ///
 /// # Safety
 /// `out` must have room for one more number than twice the block's
@@ -1000,6 +1002,10 @@ unsafe fn decode_coefs<const COUNT: bool, const TX: usize>(win: &mut Window, src
     // hold the tables to this.
     // After the count, which is written last.
     let mut pairs = 1;
+    if tx == 0 {
+        // SAFETY: the caller's: room for sixteen.
+        unsafe { out.write_bytes(0, 16) };
+    }
     let context = |cache: &[u8; 1024], c: usize| unsafe { (1 + *cache.get_unchecked(*nb.get_unchecked(2 * c) as usize) as usize + *cache.get_unchecked(*nb.get_unchecked(2 * c + 1) as usize) as usize) >> 1 };
     let place = |c: usize| unsafe { *scan.get_unchecked(c) as usize };
     let band_of = |c: usize| unsafe { *band_translate.get_unchecked(c) as usize };
@@ -1046,10 +1052,15 @@ unsafe fn decode_coefs<const COUNT: bool, const TX: usize>(win: &mut Window, src
             dqv >> dq_shift
         };
         let v = (if r.bit(src) { -v } else { v }) as i16;
-        // SAFETY: the caller's: a pair for each coefficient, after the count.
+        // SAFETY: the caller's: a pair for each coefficient, after the count,
+        // or a 4×4's sixteen.
         unsafe {
-            *out.add(pairs) = pos as i16;
-            *out.add(pairs + 1) = v;
+            if tx == 0 {
+                *out.add(pos) = v;
+            } else {
+                *out.add(pairs) = pos as i16;
+                *out.add(pairs + 1) = v;
+            }
         }
         pairs += 2;
         c += 1;
@@ -1071,9 +1082,12 @@ unsafe fn decode_coefs<const COUNT: bool, const TX: usize>(win: &mut Window, src
         }
     }
     *win = r;
-    // SAFETY: as above. A block of one coefficient has it first.
+    // SAFETY: as above. A block of one coefficient has it first, which a
+    // 4×4's is already.
     unsafe {
-        if c == 1 {
+        if tx == 0 {
+            (c, if c == 1 { 1 } else { 16 })
+        } else if c == 1 {
             *out = *out.add(2);
             (1, 1)
         } else {
