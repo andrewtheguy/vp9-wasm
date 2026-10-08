@@ -81,9 +81,17 @@ impl Decoder {
     /// error the stream decodes again from its next keyframe.
     pub fn decode(&mut self, data: &[u8]) -> Result<Option<Decoded>> {
         let mut shown = None;
-        for frame in superframe(data)? {
-            // A frame of one byte or none is one the encoder dropped.
-            if frame.len() > 1 {
+        let frames = match superframe(data) {
+            Ok(frames) => frames,
+            Err(e) => {
+                self.broken = true;
+                return Err(e);
+            }
+        };
+        for frame in frames {
+            // An empty frame is one the encoder dropped. One byte is a whole
+            // header where it shows a frame again.
+            if !frame.is_empty() {
                 match self.frame(frame) {
                     Ok(Some(d)) => shown = Some(d),
                     Ok(None) => {}
@@ -122,7 +130,8 @@ impl Decoder {
                 (f.width, f.height)
             }
         };
-        if width * height > MAX_SAMPLES {
+        // Not their product, which wraps where a `usize` is 32 bits.
+        if width > MAX_SAMPLES / height {
             return Err(Error::unsupported(format!("a {width}x{height} frame")));
         }
         let mut refs: [Option<&Frame>; 3] = [None; 3];
@@ -338,8 +347,12 @@ impl Decoder {
 
         // The pool's threads parse a tile each, then join those making and
         // filtering rows, which each take the next row that is ready soonest.
+        // A tile's thread waits on its neighbours' parsing, so each tile needs
+        // a thread the pool really has.
         #[cfg(feature = "threads")]
-        let threaded = self.threads > 1 && self.threads >= tile_cols;
+        let workers = self.threads.min(rayon::current_num_threads());
+        #[cfg(feature = "threads")]
+        let threaded = workers > 1 && workers >= tile_cols;
         #[cfg(not(feature = "threads"))]
         let threaded = {
             let _ = &parse;
@@ -369,7 +382,7 @@ impl Decoder {
                     }
                 };
                 let (parse, rows) = (&parse, &rows);
-                let extra = self.threads - tile_cols;
+                let extra = workers - tile_cols;
                 rayon::scope(|s| {
                     for (i, tile) in tiles.iter_mut().enumerate() {
                         s.spawn(move |_| {
@@ -444,4 +457,24 @@ fn superframe(data: &[u8]) -> Result<Vec<&[u8]>> {
         }
     }
     Ok(vec![data])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_frame_shown_again_in_one_byte_is_refused_by_name() {
+        // Frame marker 2, profile 0, show_existing_frame, slot 0.
+        let e = Decoder::new(1).decode(&[0b1000_1000]).err().expect("refused");
+        assert!(matches!(e, Error::Unsupported(_)), "{e}");
+    }
+
+    #[test]
+    fn a_superframe_that_fails_to_split_waits_for_a_keyframe() {
+        // An index of one frame, one byte a size, that claims more than the body.
+        let mut d = Decoder::new(1);
+        assert!(d.decode(&[0, 0xc0, 9, 0xc0]).is_err());
+        assert!(d.broken);
+    }
 }
