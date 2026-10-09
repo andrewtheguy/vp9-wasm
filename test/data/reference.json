@@ -61,6 +61,20 @@
         "c5dbf03fe8c0f104eba27aef7c58c060"
       ]
     },
+    "tiles-1024x66": {
+      "sha256": "b49efa96598ea473db96026249b9dcb48552937bed2cbdf98b60fe991c9cdfb7",
+      "width": 1024,
+      "height": 66,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "03fcf57fb40ffdb4f59f0a954721fdc3",
+        "f6e7372f00e91670c7b56c988a7f673b",
+        "7cb453edd2e0555e8db2dd88fe00f37f",
+        "1dde9f1cbbbf2c9593880835248e8f95",
+        "10e71361c6a9b4a859e8038c123f0df0",
+        "40e91f6a174aa27cfa8ffc4151d5587f"
+      ]
+    },
     "tile-rows-544x200": {
       "sha256": "66000ce9eb6bf8bb9dc2af71cdac0834d1d58893fd66e273f5e766f95374ae16",
       "width": 544,

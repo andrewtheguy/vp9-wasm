@@ -65,6 +65,9 @@ export const SPECS = {
   // thread, since libvpx codes one tile row where it has both more tile
   // columns and more threads than one.
   "tiles-608x130": { size: "608x130", pixFmt: "yuv444p", extra: ["-tile-columns", "1"] },
+  // Four tile columns, more than the two or three threads of a small pool:
+  // a thread then parses more than one.
+  "tiles-1024x66": { size: "1024x66", pixFmt: "yuv444p", frames: 6, extra: ["-tile-columns", "2"] },
   "tile-rows-544x200": { size: "544x200", pixFmt: "yuv444p", extra: ["-threads", "1", "-tile-columns", "1", "-tile-rows", "1"] },
   // Four tile rows over three rows of 64x64 blocks: three tiles of a row
   // each, after one of none.

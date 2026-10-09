@@ -41,6 +41,7 @@ const DECODED = [
   "screen-330x194",
   "screen-352x256",
   "tiles-608x130",
+  "tiles-1024x66",
   "tile-rows-544x200",
   "tile-rows-62x130",
   "still-352x256",
@@ -52,7 +53,7 @@ const DECODED = [
 
 describe("a 4:4:4 stream", () => {
   for (const name of DECODED) {
-    for (const threads of [1, 2, POOL]) {
+    for (const threads of [1, 2, 3, POOL]) {
       test(`${name} decodes bit for bit as libvpx does, on ${threads} thread(s)`, () => {
         const fixture = fixtures[name];
         const { pictures, md5s } = withDecoder(threads, (d) => decodeAll(d, fixture.frames));
