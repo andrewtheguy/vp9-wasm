@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
-use crate::frame::Frame;
+use crate::frame::{CHAIN, Frame};
 use crate::header::{self, Colour, FrameHeader, SEG_LVL_ALT_Q, SWITCHABLE, SegmentFeatures, Segments, Size, TX_MODE_SELECT};
 use crate::lf::{Filtered, LoopFilter};
 use crate::probs::{Counts, Probs};
@@ -68,6 +68,8 @@ pub struct Decoder {
     /// Each tile column's rows of coefficients, between their parsing and
     /// their reconstruction.
     rows: Vec<RowCell>,
+    /// Frames decoded so far: the last one's `Frame::serial`.
+    serial: u64,
     /// A frame failed: nothing decodes until a keyframe.
     broken: bool,
 }
@@ -93,6 +95,7 @@ impl Decoder {
             seg_maps: [Vec::new(), Vec::new()],
             seg_last: 0,
             rows: Vec::new(),
+            serial: 0,
             broken: false,
         }
     }
@@ -126,11 +129,16 @@ impl Decoder {
         Ok(shown)
     }
 
-    fn fresh_frame(&mut self, width: usize, height: usize) -> Result<Frame> {
+    /// A buffer for a frame of this size: one of the pool's that nothing
+    /// holds, by choice the one holding the newest frame of `last`'s chain,
+    /// which has the most blocks the new frame need not copy into.
+    fn fresh_frame(&mut self, width: usize, height: usize, last: Option<&Frame>) -> Result<Frame> {
         // A frame of another size goes once nothing else holds it: until
         // then it is memory taken, and counted.
         self.pool.retain(|f| Arc::strong_count(f) > 1 || (f.width == width && f.height == height));
-        if let Some(i) = self.pool.iter().position(|f| Arc::strong_count(f) == 1 && f.width == width && f.height == height) {
+        let free = |f: &Arc<Frame>| Arc::strong_count(f) == 1 && f.width == width && f.height == height;
+        let rank = |f: &Arc<Frame>| (f.serial != 0 && last.is_some_and(|l| l.chain.contains(&f.serial))).then_some(f.serial);
+        if let Some(i) = self.pool.iter().enumerate().filter(|(_, f)| free(f)).max_by_key(|(_, f)| rank(f)).map(|(i, _)| i) {
             if let Ok(frame) = Arc::try_unwrap(self.pool.swap_remove(i)) {
                 return Ok(frame);
             }
@@ -231,10 +239,37 @@ impl Decoder {
         let prev = self.prev.clone().filter(|_| use_prev_mvs && !h.intra());
         let refs_held: [Option<Arc<Frame>>; 3] = std::array::from_fn(|i| if h.intra() { None } else { self.refs[h.ref_slots[i]].clone() });
 
-        let mut frame = self.fresh_frame(width, height)?;
+        let last = refs_held[0].as_deref();
+        let mut frame = self.fresh_frame(width, height, last)?;
         frame.colour = h.colour.unwrap_or(self.colour);
+        // The blocks the buffer holds the LAST reference's samples of
+        // already: those no frame of the chain after the one the buffer
+        // held has written, where that frame is of the chain at all.
+        let was = frame.serial;
+        let blocks = frame.kept.len();
+        let held: Vec<bool> = match last {
+            Some(l) if was != 0 && l.chain.contains(&was) => l.kept.iter().map(|&k| k <= was).collect(),
+            _ => vec![false; blocks],
+        };
+        let changed: Vec<AtomicBool> = (0..blocks).map(|_| AtomicBool::new(false)).collect();
         let lf = (h.lf_level != 0).then(|| LoopFilter::new(&h, &seg, ref_deltas, mode_deltas));
-        let counts = self.decode_rows(&h, tx_mode, &probs, &seg, tiles, &mut frame, &refs_held, prev.as_deref(), lf.as_ref())?;
+        let counts = self.decode_rows(&h, tx_mode, &probs, &seg, tiles, &mut frame, &refs_held, prev.as_deref(), lf.as_ref(), &held, &changed)?;
+        // What this frame leaves for the next to go by: its place in the
+        // chain, and which blocks it wrote.
+        let serial = self.serial + 1;
+        frame.serial = serial;
+        frame.chain = [0; CHAIN];
+        frame.chain[0] = serial;
+        if let Some(l) = last {
+            frame.chain[1..].copy_from_slice(&l.chain[..CHAIN - 1]);
+        }
+        for (i, kept) in frame.kept.iter_mut().enumerate() {
+            *kept = match last {
+                Some(l) if !changed[i].load(Ordering::Relaxed) => l.kept[i],
+                _ => serial,
+            };
+        }
+        self.serial = serial;
 
         if !h.error_resilient && !h.frame_parallel {
             let mut adapted = probs.clone();
@@ -276,7 +311,7 @@ impl Decoder {
     /// The frame's samples: its tiles parsed, and its rows of 64×64 blocks
     /// reconstructed and then filtered, each stage as far behind the one
     /// before as what it reads requires.
-    fn decode_rows(&mut self, h: &FrameHeader, tx_mode: u8, probs: &Probs, seg: &Segments, mut data: &[u8], frame: &mut Frame, refs: &[Option<Arc<Frame>>; 3], prev: Option<&Frame>, lf: Option<&LoopFilter>) -> Result<Box<Counts>> {
+    fn decode_rows(&mut self, h: &FrameHeader, tx_mode: u8, probs: &Probs, seg: &Segments, mut data: &[u8], frame: &mut Frame, refs: &[Option<Arc<Frame>>; 3], prev: Option<&Frame>, lf: Option<&LoopFilter>, held: &[bool], changed: &[AtomicBool]) -> Result<Box<Counts>> {
         let (mi_cols, mi_rows) = (frame.mi_cols, frame.mi_rows);
         let sb_cols = mi_cols.div_ceil(8);
         let sb_rows = mi_rows.div_ceil(8);
@@ -349,6 +384,9 @@ impl Decoder {
             tile_starts: (0..=tile_cols).map(|i| offset(i, sb_cols, h.log2_tile_cols, mi_cols)).collect(),
             rows: &self.rows,
             sb_rows,
+            sb_cols,
+            held,
+            changed,
         };
         let filtered = Filtered { planes: f.cur, stride: f.stride, mi: f.mi, mi_cols, mi_rows };
         let mut tiles: Vec<Tile> = tile_data.into_iter().enumerate().map(|(i, data)| Tile::new(&f, i, data)).collect();
@@ -414,7 +452,16 @@ impl Decoder {
                 }
                 // SAFETY: the waits above are what the block's filtering
                 // requires, and this thread alone has the row.
-                unsafe { lf.filter_sb(&filtered, row * 8, col * 8) };
+                if unsafe { lf.filter_sb(&filtered, row * 8, col * 8) } {
+                    // Its edges reach into the blocks to its left and above.
+                    changed[row * sb_cols + col].store(true, Ordering::Relaxed);
+                    if col > 0 {
+                        changed[row * sb_cols + col - 1].store(true, Ordering::Relaxed);
+                    }
+                    if row > 0 {
+                        changed[(row - 1) * sb_cols + col].store(true, Ordering::Relaxed);
+                    }
+                }
                 smooth[row].advance(col + 1);
             }
         };

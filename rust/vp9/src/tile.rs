@@ -11,6 +11,7 @@ use crate::header::{FrameHeader, SEG_LVL_REF_FRAME, SEG_LVL_SKIP, SWITCHABLE, Se
 use crate::probs::*;
 use crate::tables::*;
 use std::cell::UnsafeCell;
+use std::sync::atomic::AtomicBool;
 
 /// The coefficients of one tile's row of 64×64 blocks, in the order its
 /// blocks are coded: parsed into, then reconstructed from.
@@ -71,6 +72,13 @@ pub(crate) struct FrameCtx<'a> {
     /// Per tile column, its rows of 64×64 blocks.
     pub rows: &'a [RowCell],
     pub sb_rows: usize,
+    pub sb_cols: usize,
+    /// Per 64×64 block, whether the frame's buffer holds the LAST reference's
+    /// samples there already, from an earlier frame of its chain.
+    pub held: &'a [bool],
+    /// Per 64×64 block, whether this frame writes any of its samples: a block
+    /// of its own that is not still, or the loop filter reaching it.
+    pub changed: &'a [AtomicBool],
 }
 
 // SAFETY: the pointers are to buffers that outlive the frame's decoding, and
@@ -319,8 +327,11 @@ impl<'a> Tile<'a> {
         }
 
         if bsize == BLOCK_8X8 || p != 3 {
-            above_part.fill(PARTITION_CONTEXT[subsize as usize][0]);
-            self.left_part[mi_row & 7..(mi_row & 7) + num_8x8].fill(PARTITION_CONTEXT[subsize as usize][1]);
+            // SAFETY: as above, and the left context has eight cells.
+            unsafe {
+                fill_pow2(above_part.as_mut_ptr(), num_8x8, PARTITION_CONTEXT[subsize as usize][0]);
+                fill_pow2(self.left_part.as_mut_ptr().add(mi_row & 7), num_8x8, PARTITION_CONTEXT[subsize as usize][1]);
+            }
         }
         Ok(())
     }
@@ -365,9 +376,12 @@ impl<'a> Tile<'a> {
             let y = (mi_row * 2) & 15;
             for plane in 0..3 {
                 // SAFETY: a block's columns are inside the frame's width
-                // rounded up to whole 64×64 blocks.
-                unsafe { std::slice::from_raw_parts_mut(f.above_nz[plane].add(x), n4_w) }.fill(0);
-                self.left_nz[plane][y..y + n4_h].fill(0);
+                // rounded up to whole 64×64 blocks, and its rows inside the
+                // 16 of the contexts to the left.
+                unsafe {
+                    fill_pow2(f.above_nz[plane].add(x), n4_w, 0);
+                    fill_pow2(self.left_nz[plane].as_mut_ptr().add(y), n4_h, 0);
+                }
             }
         } else {
             // The 4×4s of the block inside the frame, across and down.
@@ -416,37 +430,43 @@ impl<'a> Tile<'a> {
         self.r.tree(&SEGMENT_TREE, &self.f.seg.tree_probs) as u8
     }
 
-    /// The segment map's cells of the block, `x_mis` by `y_mis` inside the
-    /// frame, at `at`.
+    /// Where each of the block's rows of cells starts in a segment map,
+    /// `y_mis` rows of `x_mis` inside the frame: the offset of the first and
+    /// the distance between them.
     #[inline]
-    fn segment_cells(&self, at: *const u8, x_mis: usize, y_mis: usize) -> impl Iterator<Item = *const u8> {
-        let (mi_cols, offset) = (self.f.mi_cols, self.mi_row * self.f.mi_cols + self.mi_col);
-        // SAFETY: the block's cells are inside the frame, which the maps are
-        // the size of.
-        (0..y_mis).flat_map(move |y| (0..x_mis).map(move |x| unsafe { at.add(offset + y * mi_cols + x) }))
+    fn segment_rows(&self) -> (usize, usize) {
+        (self.mi_row * self.f.mi_cols + self.mi_col, self.f.mi_cols)
     }
 
     /// Writes the block's segment into this frame's map.
     fn set_segment_id(&mut self, x_mis: usize, y_mis: usize, segment_id: u8) {
-        for cell in self.segment_cells(self.f.seg_cur, x_mis, y_mis) {
-            // SAFETY: inside the map, and in this tile's columns.
-            unsafe { *cell.cast_mut() = segment_id };
+        let (at, pitch) = self.segment_rows();
+        for y in 0..y_mis {
+            // SAFETY: inside the map, which the frame's cells fill, and in
+            // this tile's columns.
+            unsafe { fill_cells(self.f.seg_cur.add(at + y * pitch), x_mis, segment_id) };
         }
     }
 
     /// Carries the block's cells of the last map into this frame's.
     fn copy_segment_id(&mut self, x_mis: usize, y_mis: usize) {
-        let (last, cur) = (self.f.seg_last, self.f.seg_cur);
-        for (from, to) in self.segment_cells(last, x_mis, y_mis).zip(self.segment_cells(cur, x_mis, y_mis)) {
+        let (at, pitch) = self.segment_rows();
+        for y in 0..y_mis {
             // SAFETY: inside the maps, and in this tile's columns.
-            unsafe { *to.cast_mut() = *from };
+            unsafe { std::ptr::copy_nonoverlapping(self.f.seg_last.add(at + y * pitch), self.f.seg_cur.add(at + y * pitch), x_mis) };
         }
     }
 
     /// The segment the last map gives the block: the lowest of its cells'.
     fn predicted_segment_id(&self, x_mis: usize, y_mis: usize) -> u8 {
-        // SAFETY: inside the map.
-        self.segment_cells(self.f.seg_last, x_mis, y_mis).map(|cell| unsafe { *cell }).min().unwrap_or(0)
+        let (at, pitch) = self.segment_rows();
+        let mut lowest = u8::MAX;
+        for y in 0..y_mis {
+            // SAFETY: inside the map.
+            let row = unsafe { std::slice::from_raw_parts(self.f.seg_last.add(at + y * pitch), x_mis) };
+            lowest = row.iter().fold(lowest, |l, &c| l.min(c));
+        }
+        lowest
     }
 
     /// A block's segment in a frame of only intra blocks, as
@@ -1044,6 +1064,49 @@ unsafe fn nz_any(p: *const u8, tx: usize) -> usize {
             2 => (p as *const u32).read_unaligned() != 0,
             _ => (p as *const u64).read_unaligned() != 0,
         }) as usize
+    }
+}
+
+/// Writes `v` to `n` bytes at `p`, `n` being 1, 2, 4, 8 or 16: a fill of a
+/// few bytes as whole words, where `fill` would be a `memory.fill` into the
+/// engine's runtime.
+///
+/// # Safety
+/// `n` bytes are writable at `p`.
+#[inline(always)]
+unsafe fn fill_pow2(p: *mut u8, n: usize, v: u8) {
+    let word = v as u64 * 0x0101_0101_0101_0101;
+    unsafe {
+        match n {
+            1 => *p = v,
+            2 => (p as *mut u16).write_unaligned(word as u16),
+            4 => (p as *mut u32).write_unaligned(word as u32),
+            8 => (p as *mut u64).write_unaligned(word),
+            _ => {
+                (p as *mut u64).write_unaligned(word);
+                (p.add(8) as *mut u64).write_unaligned(word);
+            }
+        }
+    }
+}
+
+/// Writes `v` to `n` bytes at `p`, `n` being 1 to 8: a block's row of cells
+/// in a map, whole where the block is inside the frame.
+///
+/// # Safety
+/// `n` bytes are writable at `p`.
+#[inline(always)]
+unsafe fn fill_cells(p: *mut u8, n: usize, v: u8) {
+    unsafe {
+        if n.is_power_of_two() {
+            fill_pow2(p, n, v);
+        } else {
+            // A block the frame's edge cuts: byte by byte, volatile so that
+            // the loop is not made a `memory.fill` again.
+            for i in 0..n {
+                p.add(i).write_volatile(v);
+            }
+        }
     }
 }
 

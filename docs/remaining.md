@@ -21,11 +21,22 @@ nothing below is large. In the order the work would go:
   `probs[band][ctx]` by a multiply by 18 that a table of the 36 triples'
   offsets would make a shift. It rides beside the boolean's chain, not on
   it.
-- **The fills.** Each `fill` of a few bytes of the context arrays, and of
-  the 32-byte `ModeInfo` over a block's cells, is a `memory.fill` into V8's
-  runtime, 0.8% of a quiet desktop; whole words as hevc-wasm writes them
-  would do, and `ModeInfo` could be half its size, since only a block under
-  8×8 has four motion vectors.
+- **`ModeInfo` smaller.** The context fills of a few bytes are whole words
+  now, as hevc-wasm writes them, and the parse of a 64×64 block in the
+  inactive segment is mostly the 34-byte `ModeInfo` written to its 64 cells:
+  2 KB a block, 4 MB a 4K frame, half of the parser's block function in a
+  native line profile of the quiet 4K sample, where that function is a third
+  of the frame. Only a block under 8×8 has four motion vectors and four
+  modes, and those could live in a table of their own by cell, `mv` is
+  always `sub_mv[3]` and `mode` always `sub_mode[3]`, so the record could be
+  16 bytes.
+- **The damage to the painter.** What changed reaches the decoder, as the
+  active map, and stops there: the page uploads all three planes of every
+  picture to WebGL, 25 MB at 4K for a frame of a kilobyte. The decoder now
+  knows which 64×64 blocks a frame wrote (`Frame::kept`); `picture()` could
+  say so, as a rectangle or as the rows of blocks, and remotex's paint worker
+  upload only that with `texSubImage2D`, or nothing when nothing changed.
+  Likely worth more on an iPad than the decode of such a frame now costs.
 - **The transforms in plain code**: the ADST at 8 and 16 and the DCT at 16
   and 32. A quiet desktop has 184 8×8 ADST blocks a frame, 0.4% of its
   instructions; a busy frame's have not been counted. An exact port needs

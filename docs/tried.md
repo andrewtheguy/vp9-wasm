@@ -8,6 +8,18 @@ frames, where two thirds of the time is token parsing.
 
 ## Most of the still blocks' copy not made
 
+What this section measured is done another way now that `screen-vp9`
+0.0.12 coded a frame told where the picture changed through libvpx's active
+map: see the README. The blocks outside the change are a segment that skips
+and is not loop filtered, so whether a 64×64 block came out as the reference
+had it is known for nothing from the modes and the filter's own report, with
+no comparison and no kernel reporting a side; and a quiet frame's rows are
+nearly all held already, so the runs copied are one or two blocks and not
+the fragments these captures' half-still frames gave. On the captures below,
+which have the filter on every block, every block is written and the whole
+row is copied as before. What follows is the record of the three ways that
+were no faster.
+
 Each row of 64×64 blocks of an inter frame starts as the last frame's rows,
 copied in one sequential pass (`Recon::start_row`), so that a block with a
 zero motion vector and no residual, half a screen's area, costs nothing in

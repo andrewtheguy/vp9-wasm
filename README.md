@@ -245,11 +245,20 @@ motion vector from the last frame and no residual, which is most of a
 screen's area, is then no reconstruction at all, where its own whole-sample
 copy had been a tenth of the time. With threads a frame of one tile column
 waits on its parsing, which is why the four-thread times move little.
-Measured and not done: a row copying only its still blocks, and a pooled
-buffer keeping track of which blocks are the last frame's still so that a
-row copies less. The whole row is one sequential pass that also brings the
-reference's lines into cache for the blocks that move, and telling a block
-unchanged costs about what copying it does. Before 0.0.3, filtering two
+On those captures a row copying only its still blocks, and a pooled buffer
+keeping track of which blocks are the last frame's still so that a row copies
+less, were measured and not done: the whole row is one sequential pass that
+also brings the reference's lines into cache for the blocks that move, and
+telling a block unchanged cost about what copying it did. The second is
+now done, differently, for the frames `screen-vp9` 0.0.12 codes told
+where the picture changed: the blocks outside the change are a segment that
+skips and is not loop filtered, so a frame knows for nothing which 64×64
+blocks it wrote, each frame stamps its blocks with the newest frame of its
+reference chain that did, and a buffer still holding a frame of that chain
+is copied into only where a later frame wrote. A quiet 4K frame, a kilobyte
+that touches three or four of its 2,040 blocks, was 60% that copy; its
+cycles are 44% fewer for it and its median frame four times faster, and a
+busy frame copies the whole row as before. Before 0.0.3, filtering two
 edges that lie end to end in one vector and the edge kernels as functions of
 their own were measured and are not done either: those are in
 [docs/tried.md](docs/tried.md). Where a frame's time goes, what threads
@@ -260,11 +269,12 @@ do yet in [docs/remaining.md](docs/remaining.md).
 The routine measurement of a change is `bench/run.sh [BUILD...]`, some
 minutes: each BUILD is a directory holding a build of the module, `build/out`
 when none is named, or the word `libvpx` for ffmpeg's decoder. It decodes
-five samples of 120 frames, cut from those captures as `screen-vp9` 0.0.10
-codes each size, one from a quiet stretch and four from the busiest, of one
-tile column, two and four. `bench/samples.sh` copies them once from the
-`bench` folder of the artifacts drive to `tmp/bench`, and no run reads the
-drive. That folder has a quiet and a busy sample of every size captured, and
+five samples of 120 frames, one from a quiet stretch and four from the
+busiest, of one tile column, two and four, cut from wlshare's captures by
+its `scripts/vp9-samples.sh` as `screen-vp9` 0.0.12 codes each size, told
+where the picture changed. `bench/samples.sh` copies them once from the
+`bench` folder of the artifacts drive, or from `VP9_BENCH_SOURCE`, to
+`tmp/bench`, and no run reads the drive. That folder has a quiet and a busy sample of every size captured, and
 `SAMPLES` names others to decode instead. The script does what a busy host needs: it pins the builds to the same
 cores (`taskset`), alternates them round by round, waits for the load to fall
 before each stream, and prints `perf stat -e instructions:u,cycles:u` beside

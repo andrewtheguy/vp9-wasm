@@ -25,5 +25,5 @@ mod wavefront;
 
 pub use decoder::{Decoded, Decoder};
 pub use error::{Error, Result};
-pub use frame::{Frame, Plane};
+pub use frame::{Frame, ModeInfo, Plane};
 pub use header::Colour;
