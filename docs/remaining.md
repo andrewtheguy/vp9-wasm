@@ -41,6 +41,29 @@ transform blocks, 31K coded, and 26K 8×8; 144K kernel calls, 37% leaving
 early. Every capture is one tile column, so a frame's parsing is one
 thread's whatever the pool, and it is what the four-thread time waits on.
 
+The same profile on the gateway's own streams, the 120-frame samples of
+`bench/samples.sh`, says something else of a busy frame, which is where a
+decoder falls behind:
+
+| function | quiet 1440×900 | busy 1920×1080 | busy 2560×1600 | busy 3840×2160 |
+|---|---|---|---|---|
+| the loop filter | 26% | 11% | none coded | none coded |
+| `decode_coefs`, with `large_token` | 21% | 52% | 61% | 56% |
+| `tokens` | 6% | 5% | 7% | 6% |
+| `Recon::block`, with `residual` | 5% | 5% | 8% | 9% |
+| `inverse_add`, with `add_8x8` | 3% | 4% | 5% | 5% |
+| `convolve::predict` and its filters | 4% | 5% | 5% | 6% |
+| the row copy | 3% | 1% | 1% | 4% |
+
+A busy frame is two thirds token parsing, and against libvpx the module is
+then within a twentieth of its cycles (433 M a frame for 413 at
+2560×1600, 294 for 283 at 3840×2160) where on a quiet frame it is 40%
+behind: both sit on the boolean's chain (2 below). So what was tried on the
+earlier captures and found no faster, the still blocks' copy, the loop
+filter's pairs and the empty transform block, was tried on the parts that
+are smallest when the frame is slow, and none of it is worth trying again
+on these. What a busy frame has is threads, a tile column each.
+
 ### 1. The still blocks, and the copy each one was
 
 Nearly every block of a screen is an inter block with a zero motion vector
@@ -315,8 +338,27 @@ Windows capture at 1920×1080 does not: its busy frames are 28% faster on
 four threads in four columns without the filter, 22.6 ms for 31.3, and 16%
 larger, 15% of it the columns alone, whether for their 480 samples or for
 what is on that desktop. So `screen-vp9` 0.0.10 codes four columns from
-2048 wide, and with them leaves the filter out there. Not measured: the
-widths between.
+2048 wide, and with them leaves the filter out there.
+
+It is what is on that desktop, and not the width. 120 busy frames coded
+with the filter, in MB, by the columns:
+
+| | one | two | four |
+|---|---|---|---|
+| Windows, 1280×800 | 37.4 | 39.9, +7% | 43.2, +8% more |
+| Windows, 1920×1080 | 49.5 | 55.5, +12% | 63.1, +14% more |
+| Windows, 3456×2168, its top left 1920×1080 | | 15.3 | 15.5, +1.4% |
+| Windows, 3456×2168, its top left 2560×1600 | | 28.1 | 28.5, +1.3% |
+| Mac, 2560×1600, its top left 1920×1080 | | 69.3 | 70.1, +1.1% |
+
+The two that pay are a Windows terminal at one sample to the pixel,
+scrolling random coloured text over the whole screen; the Mac's busy frames
+are the same text in a terminal at two samples to the pixel and pay 1%, as
+a browser on Windows does. So a column costs about 1% at 1920 wide as it
+does above, except on that terminal, where the two columns `screen-vp9`
+codes from 1440 wide already cost 12%. Not known: what in it costs, the
+small text or how Windows scrolls it, and so whether a desktop of 2048 wide
+or more at one sample to the pixel would pay the same for its four.
 
 ### 4. The rest
 
@@ -346,9 +388,23 @@ widths between.
   runtime, 0.8% of the desktop capture; whole words as hevc-wasm writes them
   would do, and `ModeInfo` could be half its size, since only a block under
   8×8 has four motion vectors.
-- **Four threads.** Against one, by the README table's medians: the desktop
-  capture 1.65×, the Mac's 1.8×, the shader animation 1.8×, the Mac
-  recording 3.3×, all bound by the one tile's parsing (2 above).
+- **Threads.** Mean ms a frame on the samples, by the pool's threads, two
+  to four on four cores and five and six on six:
+
+  | | columns | 1 | 2 | 3 | 4 | 5 | 6 |
+  |---|---|---|---|---|---|---|---|
+  | quiet 1440×900 | 2 | 13.4 | 6.5 | 5.6 | 5.8 | 6.8 | 6.6 |
+  | busy 1280×800 | 1 | 46.6 | 33.0 | 32.9 | 33.8 | 37.7 | 38.1 |
+  | busy 1920×1080 | 2 | 76.4 | 41.2 | 34.2 | 31.2 | 34.9 | 35.1 |
+  | busy 2560×1600, no filter | 4 | 136.0 | 76.6 | 54.3 | 41.7 | 37.7 | 38.8 |
+  | busy 3840×2160, no filter | 4 | 95.0 | 48.3 | 38.8 | 31.9 | 32.4 | 32.7 |
+
+  A frame is bound by its columns' parsing: 1.4× on four threads in one
+  column, 2.4× in two, 3.0× to 3.3× in four. Past four threads the 2560
+  sample gains a tenth and the rest lose up to a sixth, on a machine with
+  nothing else to run, so four it stays. Before this a pool of fewer threads
+  than the frame had columns decoded it on one, 136 ms and 135 for the 76.6
+  and 54.3 above: the threads now take the columns from a queue.
 
 ### Elsewhere
 
