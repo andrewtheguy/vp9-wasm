@@ -159,27 +159,27 @@ builds alternately on the same cores, one for one thread and four for four,
 once the host was quiet, each once. The cycle counts are `perf stat`'s for
 the whole process and do not depend on the load.
 
-The module against its own earlier release, both under Bun. Each cell is
-release 0.0.3 → release 0.0.5, per frame, and lower is better:
+The module against its own earlier release, both under Bun, per frame,
+lower better:
 
-| Capture | Threads | M instructions, 0.0.3 → 0.0.5 | M cycles, 0.0.3 → 0.0.5 | Mean ms, 0.0.3 → 0.0.5 |
-|---|---|---|---|---|
-| Windows, 1280×800, 1898 frames | 1 | 134.5 → 129.4 | 69.0 → 66.0 | 21.4 → 20.5 |
-| | 4 | 134.9 → 129.9 | 72.4 → 68.9 | 16.0 → 15.7 |
-| Windows, 1440×900, 1797 frames | 1 | 165.6 → 158.7 | 85.1 → 81.2 | 26.4 → 25.1 |
-| | 4 | 165.8 → 159.0 | 89.4 → 84.6 | 12.3 → 12.0 |
-| Windows, 1600×1000, 2333 frames | 1 | 205.3 → 198.0 | 104.8 → 100.0 | 32.4 → 31.1 |
-| | 4 | 205.9 → 198.4 | 108.5 → 103.3 | 13.7 → 13.4 |
-| Windows, 1920×1080, 1943 frames | 1 | 196.8 → 189.5 | 101.4 → 96.2 | 31.9 → 29.8 |
-| | 4 | 197.2 → 189.9 | 105.3 → 100.8 | 13.3 → 13.7 |
-| a Mac, 2560×1600, 1986 frames | 1 | 301.0 → 291.9 | 154.3 → 147.6 | 48.7 → 46.5 |
-| | 4 | 301.8 → 292.7 | 160.6 → 152.5 | 19.6 → 18.9 |
-| a Mac, 2880×1800, 2245 frames | 1 | 382.9 → 370.2 | 200.1 → 190.4 | 61.9 → 59.6 |
-| | 4 | 384.0 → 371.4 | 213.1 → 205.7 | 23.5 → 22.9 |
-| Windows, 3456×2168, 887 frames | 1 | 506.5 → 488.0 | 272.2 → 256.2 | 98.3 → 87.6 |
-| | 4 | 508.7 → 490.0 | 280.0 → 266.9 | 30.6 → 30.8 |
-| a Mac, 3840×2160, 1443 frames | 1 | 450.7 → 435.3 | 234.5 → 220.3 | 73.1 → 68.6 |
-| | 4 | 451.6 → 436.3 | 249.4 → 234.2 | 28.4 → 27.8 |
+| Capture | Threads | M cycles, 0.0.3 | M cycles, 0.0.5 | Mean ms, 0.0.3 | Mean ms, 0.0.5 |
+|---|---|---|---|---|---|
+| Windows, 1280×800, 1898 frames | 1 | 69.0 | 66.0 | 21.4 | 20.5 |
+| | 4 | 72.4 | 68.9 | 16.0 | 15.7 |
+| Windows, 1440×900, 1797 frames | 1 | 85.1 | 81.2 | 26.4 | 25.1 |
+| | 4 | 89.4 | 84.6 | 12.3 | 12.0 |
+| Windows, 1600×1000, 2333 frames | 1 | 104.8 | 100.0 | 32.4 | 31.1 |
+| | 4 | 108.5 | 103.3 | 13.7 | 13.4 |
+| Windows, 1920×1080, 1943 frames | 1 | 101.4 | 96.2 | 31.9 | 29.8 |
+| | 4 | 105.3 | 100.8 | 13.3 | 13.7 |
+| a Mac, 2560×1600, 1986 frames | 1 | 154.3 | 147.6 | 48.7 | 46.5 |
+| | 4 | 160.6 | 152.5 | 19.6 | 18.9 |
+| a Mac, 2880×1800, 2245 frames | 1 | 200.1 | 190.4 | 61.9 | 59.6 |
+| | 4 | 213.1 | 205.7 | 23.5 | 22.9 |
+| Windows, 3456×2168, 887 frames | 1 | 272.2 | 256.2 | 98.3 | 87.6 |
+| | 4 | 280.0 | 266.9 | 30.6 | 30.8 |
+| a Mac, 3840×2160, 1443 frames | 1 | 234.5 | 220.3 | 73.1 | 68.6 |
+| | 4 | 249.4 | 234.2 | 28.4 | 27.8 |
 
 The module against libvpx, per frame, lower better: release 0.0.5 in the
 same runs and ffmpeg 7.1's
