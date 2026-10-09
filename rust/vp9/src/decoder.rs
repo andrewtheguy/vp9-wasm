@@ -368,14 +368,16 @@ impl Decoder {
             }
         };
 
-        // The pool's threads parse a tile each, then join those making and
-        // filtering rows, which each take the next row that is ready soonest.
-        // A tile's thread waits on its neighbours' parsing, so each tile needs
-        // a thread the pool really has.
+        // The pool's threads each parse the next tile no thread has taken,
+        // then join those making and filtering rows, which each take the next
+        // row that is ready soonest. A row waits on every tile's parsing, so
+        // no thread starts on the rows while a tile is still to be taken:
+        // with fewer threads than tiles a thread parses several, one after
+        // another.
         #[cfg(feature = "threads")]
         let workers = self.threads.min(rayon::current_num_threads());
         #[cfg(feature = "threads")]
-        let threaded = workers > 1 && workers >= tile_cols;
+        let threaded = workers > 1;
         #[cfg(not(feature = "threads"))]
         let threaded = {
             let _ = &parse;
@@ -404,17 +406,18 @@ impl Decoder {
                         }
                     }
                 };
-                let (parse, rows) = (&parse, &rows);
-                let extra = workers - tile_cols;
+                let unparsed = Mutex::new(tiles.iter_mut().enumerate());
+                let (parse, rows, unparsed) = (&parse, &rows, &unparsed);
                 rayon::scope(|s| {
-                    for (i, tile) in tiles.iter_mut().enumerate() {
+                    for _ in 0..workers {
                         s.spawn(move |_| {
-                            parse(tile, i);
+                            loop {
+                                let next = unparsed.lock().unwrap_or_else(|e| e.into_inner()).next();
+                                let Some((i, tile)) = next else { break };
+                                parse(tile, i);
+                            }
                             rows();
                         });
-                    }
-                    for _ in 0..extra {
-                        s.spawn(move |_| rows());
                     }
                 });
             }
