@@ -241,9 +241,11 @@ row copies less. The whole row is one sequential pass that also brings the
 reference's lines into cache for the blocks that move, and telling a block
 unchanged costs about what copying it does. Before 0.0.3, filtering two
 edges that lie end to end in one vector and the edge kernels as functions of
-their own were measured and are not done either. What it does not do yet,
-with what was measured on the way, is in
-[docs/remaining.md](docs/remaining.md).
+their own were measured and are not done either: those are in
+[docs/tried.md](docs/tried.md). Where a frame's time goes, what threads
+give and what the loop filter and the tile columns cost a stream are in
+[docs/measurements.md](docs/measurements.md), and what the decoder does not
+do yet in [docs/remaining.md](docs/remaining.md).
 
 The routine measurement of a change is `bench/run.sh [BUILD...]`, some
 minutes: each BUILD is a directory holding a build of the module, `build/out`
