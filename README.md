@@ -242,9 +242,17 @@ their own were measured and are not done either. What it does not do yet,
 with what was measured on the way, is in
 [docs/remaining.md](docs/remaining.md).
 
-To benchmark on a busy host, pin both builds to the same cores (`taskset`),
-alternate them, wait for the load to fall before each stream, and read
-`perf stat -e instructions:u,cycles:u` rather than wall time alone.
+The routine measurement of a change is `bench/run.sh [BUILD...]`, some
+minutes: each BUILD is a directory holding a build of the module, `build/out`
+when none is named, or the word `libvpx` for ffmpeg's decoder. It decodes
+five samples of 120 frames, cut from those captures as `screen-vp9` 0.0.10
+codes each size, one from a quiet stretch and four from the busiest, of one
+tile column, two and four. `bench/samples.sh` copies them once from the
+`bench` folder of the artifacts drive to `tmp/bench`, and no run reads the
+drive. The script does what a busy host needs: it pins the builds to the same
+cores (`taskset`), alternates them round by round, waits for the load to fall
+before each stream, and prints `perf stat -e instructions:u,cycles:u` beside
+the times, with the medians of three rounds.
 
 ## Requirements
 
