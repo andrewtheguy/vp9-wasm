@@ -15,6 +15,9 @@ and build details belong in the [README](README.md).
 - After test changes, run `bun test` and `bun run typecheck`, once each.
 - Run `bun run fixtures` only when a spec in `test/fixtures.ts` changes, and
   commit what it writes to `test/data`.
+- To measure a change, run `bench/run.sh BASE build/out`, minutes on short
+  samples. Run whole captures only when asked, and never read a stream from
+  the artifacts drive: copy it under `tmp/` first.
 - Do not run `cargo fmt`.
 - Put temporary files and test configuration under `tmp/`. Always run local
   Python through `uv` (GitHub Actions excluded).

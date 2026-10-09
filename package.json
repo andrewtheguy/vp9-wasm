@@ -5,6 +5,7 @@
   "scripts": {
     "test": "bun test",
     "fixtures": "bun test/generate-fixtures.ts",
+    "bench": "bench/run.sh",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

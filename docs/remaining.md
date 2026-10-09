@@ -158,26 +158,165 @@ test in `Recon::block` was not, and is gone (4 below).
 
 ### 3. The loop filter
 
-A quarter to a third of a frame on one thread, in the edge kernels, which
-are vectors already with the eight positions of an edge in the low eight
-lanes and leave early where the samples are the same across the edge. About
-83 cycles a call on average, the early-outs included.
+34% to 43% of a frame's cycles on one thread, taken by leaving parts of it
+out of the module (which changes the picture, so the parts are near and not
+exact). Per frame, in M cycles:
 
-Measured and no faster: the six kernels as functions of their own rather
-than inlined into the filter's loop, 4% more instructions and no fewer
-cycles, although the loop is a 5,000-instruction function full of spills;
-and, before this release, two edges that lie end to end in one vector
-(`tmp/lf-pair-kept` holds that version), since a third to four fifths of the
-wider edges leave after their loads and two together seldom both do. On the
-Mac capture, where the narrow four-tap filter is 45K of 103K calls and only
-a quarter leave early, that pairing may read differently; it was not
-measured per filter width.
+| | desktop | Mac | shader | recording |
+|---|---|---|---|---|
+| the frame | 20.3 | 39.4 | 53.6 | 159.3 |
+| the masks of each 64×64 block, and the walk over them | 0.7 | 0.8 | 0.8 | 4.7 |
+| the kernels of the vertical edges | 3.3 | 7.4 | 8.8 | 35.2 |
+| the kernels of the horizontal edges | 2.5 | 4.9 | 6.5 | 25.2 |
 
-Untried: the masks settled as the blocks are parsed, as hevc-wasm's
-boundary strengths are, instead of the scan of the 64 modes of a block at
-filter time (about 0.6% of the instructions, so by itself small); and
-libvpx's own `ss00` path for 4:4:4, whose masks are 64-bit words per block
-and whose kernels filter two rows of 8×8 blocks at once.
+So it is the kernels, which are vectors already with the eight positions of
+an edge in the low eight lanes, and leave early where the samples are the
+same across the edge. Per frame and direction, by the widest filter an edge
+may take and what it came to:
+
+| | desktop | Mac | shader |
+|---|---|---|---|
+| narrow edges | 1.7K | 30K | 35K |
+| of them filtered | 78% | 86% | 86% |
+| 8-sample edges | 21K | 12.5K | 31K |
+| of them the same across the edge | 58% | 34% | 51% |
+| of them with a position the 7-tap filter takes | 29% | 45% | 35% |
+| 16-sample edges | 6.5K | 8.5K | 5.5K |
+| of them the same across the edge | 75% | 57% | 67% |
+
+Measured and no faster:
+
+- The six kernels as functions of their own rather than inlined into the
+  filter's loop: 4% more instructions and no fewer cycles, although the loop
+  is a 5,000-instruction function full of spills.
+- Two edges that lie end to end in one vector, whatever their widths
+  (`tmp/lf-pair-kept` holds that version): on this tree 17% more
+  instructions and 12% more cycles on the Mac capture, 23% and 17% on the
+  desktop's. The flat filters sum in 16-bit lanes, so sixteen positions are
+  two vectors of them and nothing is saved, and a pair leaves early only
+  when both edges would.
+- Only the narrow edges paired, whose arithmetic is all in bytes and so
+  costs the same for sixteen positions as for eight. Two side by side along
+  a horizontal edge, in the walk as it is: 0.8 M fewer instructions a frame
+  on the Mac capture and the shader animation, which is what a narrow edge
+  costs (about 60 instructions), and 0.2 and 0.1 M fewer cycles of 39.4 and 53.5;
+  none on the others. Two one above the other along a vertical edge need
+  the walk to take two rows of blocks at a time, since along a row each
+  edge reads what the one before it wrote; that walk with the pairs is 3 M
+  more instructions a frame on the desktop capture and the shader animation
+  and 21 M more on the recording, under Bun, with or without the kernels
+  inlined, and without the pairs it is 2 M fewer on the Mac capture and 2 M
+  more on the recording: the function's size and what the engine makes of
+  it decide more than the arithmetic saved.
+
+What is left in the decoder is the 8- and 16-sample edges that do work,
+whose cost is their transposes and their 16-bit sums. Untried: the masks
+settled as the blocks are parsed, as hevc-wasm's boundary strengths are,
+instead of the scan of the 64 modes of a block at filter time, which is at
+most the masks' row above; and libvpx's own `ss00` path for 4:4:4, whose
+kernels filter two rows of 8×8 blocks at once, which the pairs above say
+is no gain here.
+
+The larger step is the encoder's, and it is paid for in the picture.
+Every frame of the captures has a filter level of 7 to 9 and a sharpness of
+0: libvpx at this speed takes the level from the quantizer, never below 4
+between keyframes, a light filter that still visits every edge. Its
+`VP9E_SET_DISABLE_LOOPFILTER` at 2 makes the level 0, at which a frame is
+not filtered at all. Measured on what the remotex gateway itself wrote on
+2026-10-08, one desktop of four panes at eight sizes: a Windows desktop
+over RDP at five and a virtual Mac at three. The first 300 frames of each
+were coded again by `screen-vp9` with the filter and without it, at
+quality 90 on four threads as the gateway codes them, and the module
+decodes each of the sixteen streams as libvpx does. The bytes are without
+the filter over with it, the PSNR libvpx's decoder's against the planes
+that went in, the cycles a frame on one thread and the mean milliseconds a
+frame on four:
+
+| | tile columns | bytes | luma dB | chroma dB | encode | M cycles | ms on four |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows, 1280×800 | 1 | +3.1% | 46.69 → 45.81 | 50.77 → 49.29 | −8% | 36.5 → 25.9 | 7.5 → 7.2 |
+| Windows, 1440×900 | 2 | +3.7% | 47.53 → 46.58 | 51.63 → 50.12 | −6% | 39.8 → 27.6 | 5.8 → 5.7 |
+| Windows, 1600×1000 | 2 | +3.7% | 47.59 → 46.60 | 51.63 → 50.11 | −6% | 47.3 → 33.0 | 6.4 → 6.1 |
+| Windows, 1920×1080 | 2 | +3.6% | 47.35 → 46.49 | 51.99 → 50.53 | −5% | 72.0 → 50.6 | 9.0 → 9.8 |
+| Mac, 2560×1600 | 2 | +4.4% | 49.81 → 49.00 | 55.24 → 53.60 | −6% | 87.7 → 55.3 | 10.3 → 9.5 |
+| Mac, 2880×1800 | 4 | +3.6% | 49.99 → 48.61 | 53.57 → 51.36 | −7% | 79.1 → 46.8 | 10.4 → 6.4 |
+| Windows, 3456×2168 | 4 | +3.3% | 50.41 → 49.78 | 55.44 → 54.12 | −3% | 190.3 → 134.3 | 21.3 → 14.2 |
+| Mac, 3840×2160 | 4 | +5.5% | 50.64 → 49.82 | 56.03 → 54.55 | −3% | 154.5 → 100.1 | 17.4 → 12.1 |
+
+One thread decodes in 29% to 41% fewer cycles at every size. Four gain 31%
+to 38% of the time where the stream is in four tile columns and nothing to
+speak of where it is in one or two, up to 2560 wide, because there the
+frame waits on the parsing of its columns and the filter was not what held
+it. The line falls between 2560 and 2880, where `screen-vp9` goes from two
+columns to four, and the two neighbours show it: 9.5 ms for 10.3 against
+6.4 for 10.4. The earlier captures, a wlshare desktop and animation and a
+Mac screen recording, said the same, and gave two more figures. A
+3456×1804 desktop coded in two columns instead of four is 27.4 ms on four
+threads for 29.0, so it is the columns and not the width. And the filter
+is worth more to the picture than its level suggests, since every later
+frame predicts from what it smoothed: at the same luma PSNR a 1440×900 Mac
+capture without the filter is quality 97 for 90, 34% more bytes, and then
+31.4 M cycles a frame for 40.1.
+
+So `screen-vp9` 0.0.9 leaves the filter out of a 4:4:4 stream in four tile
+columns or more, 2880 wide on four threads, and keeps it elsewhere. Not
+measured: more than four decoding threads, which a page with eight cores
+gets, and the picture by eye.
+
+The first 300 frames are the quiet end of each capture, 40 to 150 KB a
+frame. The 300 that took the most bytes, 290 KB to 1.2 MB a frame, were
+coded again the same way from a keyframe, and libvpx's decoder timed beside
+the module:
+
+| busiest 300 | tile columns | bytes | luma dB | M cycles | ms on four | libvpx, ms on four |
+| --- | --- | --- | --- | --- | --- | --- |
+| Windows, 1280×800 | 1 | +0.4% | 43.31 → 42.98 | 142.4 → 126.8 | 34.0 → 35.6 | 39.2 → 38.2 |
+| Windows, 1440×900 | 2 | +0.7% | 43.34 → 43.00 | 162.0 → 142.3 | 23.1 → 23.2 | 25.7 → 24.1 |
+| Windows, 1600×1000 | 2 | +0.2% | 43.37 → 43.00 | 194.7 → 170.4 | 26.2 → 26.1 | 30.4 → 27.6 |
+| Windows, 1920×1080 | 2 | +1.2% | 43.44 → 43.07 | 236.1 → 207.0 | 31.0 → 32.9 | 38.1 → 34.3 |
+| Mac, 2560×1600 | 2 | +1.1% | 44.96 → 44.40 | 355.2 → 298.3 | 44.1 → 40.9 | 54.3 → 46.6 |
+| Mac, 2560×1600 | 4 | +1.3% | 44.90 → 44.35 | 356.4 → 300.6 | 39.1 → 29.4 | 30.9 → 27.2 |
+| Mac, 2880×1800 | 4 | +0.8% | 44.81 → 44.34 | 560.1 → 480.8 | 62.9 → 46.3 | 47.8 → 44.6 |
+| Windows, 3456×2168 | 4 | +0.5% | 48.13 → 47.79 | 433.7 → 371.9 | 49.2 → 42.4 | 49.3 → 44.6 |
+| Mac, 3840×2160 | 4 | +1.1% | 46.80 → 46.23 | 557.9 → 468.3 | 65.0 → 47.7 | 52.5 → 46.9 |
+
+A busy frame is mostly coefficients, so the filter is less of it and of the
+stream: 11% to 16% of one thread's cycles, 0.2% to 1.3% of the bytes, 0.3
+to 0.6 dB. The line holds: four threads gain 14% to 27% in four columns and
+nothing to speak of in one or two. In four columns without the filter the
+module's four threads and libvpx's are within 8% of each other, where with it
+libvpx's are ahead by up to a quarter.
+
+Four columns under 2880 wide were tried on the 2560×1600 capture, the same
+300 frames, the columns forced in a copy of `screen-vp9`:
+
+| columns, filter | MB | luma dB | encode ms | M cycles | ms on four |
+| --- | --- | --- | --- | --- | --- |
+| two, on | 15.21 | 49.81 | 42.9 | 84.3 | 9.3 |
+| two, off | 15.87 | 49.00 | 40.4 | 54.8 | 8.3 |
+| four, on | 15.22 | 49.79 | 38.8 | 85.4 | 9.0 |
+| four, off | 15.89 | 48.99 | 37.0 | 55.5 | 6.1 |
+
+The columns themselves cost 0.1% of the bytes, nothing of the picture and
+1% of one thread's cycles, and the encoder's four threads code them a
+tenth faster. With the filter the decoder's four threads get nothing from
+them; without it the frame is 6.1 ms for 9.3, a third less, as from 2880
+wide. On the busiest 300, in the table above, four columns cost 1.0% of
+the bytes, the encoder codes them 14% faster, and four columns without the
+filter are 29.4 ms for the 44.1 of two with it, for 2.3% of the bytes and
+0.6 dB.
+
+A 2048×1536 capture of the same Mac says the same, two columns with the
+filter against four without it: 8.1 ms on four threads and 5.3 on its quiet
+300, for 4.1% of the bytes and 0.9 dB, and 45.1 and 28.1 on its busiest,
+for 2.2% and 0.5 dB, of which the columns are 0.1% and 1.4% of the bytes.
+libvpx's four threads go from 51.9 ms to 27.0 on the busy frames. The
+Windows capture at 1920×1080 does not: its busy frames are 28% faster on
+four threads in four columns without the filter, 22.6 ms for 31.3, and 16%
+larger, 15% of it the columns alone, whether for their 480 samples or for
+what is on that desktop. So `screen-vp9` 0.0.10 codes four columns from
+2048 wide, and with them leaves the filter out there. Not measured: the
+widths between.
 
 ### 4. The rest
 

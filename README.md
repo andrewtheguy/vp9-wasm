@@ -150,50 +150,81 @@ and `PATENTS`).
   run it under `node --perf-prof` and `perf record`: the build keeps the
   function names. Profiles and logs go under `tmp/`.
 
-The comparison is between two builds of the module under Bun: as it is, and
-release 0.0.3. They ran on a six-core x86 workstation, alternately on the
-same cores, one for one thread and four for four, once the host was quiet;
-the medians of three rounds are shown. The cycle counts are `perf stat`'s for
-the whole process and do not depend on the load. Per frame:
+The comparison is on what the remotex gateway itself wrote on 2026-10-08,
+one desktop of four panes, an animation, a page scrolled, a terminal
+printing and a page of text, at eight sizes: a Windows desktop over RDP at
+five and a virtual Mac at three, at quality 90 with the loop filter on
+every frame, each capture whole. It ran on a six-core x86 workstation, the
+builds alternately on the same cores, one for one thread and four for four,
+once the host was quiet, each once. The cycle counts are `perf stat`'s for
+the whole process and do not depend on the load.
 
-| Capture | Threads | M instructions | M cycles | Median ms |
-|---|---|---|---|---|
-| desktop, 1440×900, 665 frames | 1 | 43.2 → 42.1 | 21.6 → 21.2 | 5.7 → 5.4 |
-| | 4 | 42.9 → 41.8 | 23.0 → 22.6 | 2.9 → 2.8 |
-| a Mac's, 1440×900, 743 frames | 1 | 84.5 → 83.0 | 43.3 → 42.5 | 13.8 → 13.3 |
-| | 4 | 84.5 → 82.8 | 44.0 → 43.9 | 6.7 → 6.8 |
-| a shader animation, 1728×902, 822 frames | 1 | 112.2 → 111.3 | 58.2 → 58.2 | 18.9 → 18.8 |
-| | 4 | 112.1 → 111.2 | 59.1 → 59.6 | 9.7 → 9.8 |
-| a Mac screen recording, 3456×2234, 200 frames | 1 | 347.4 → 340.4 | 174.7 → 169.8 | 59.3 → 58.2 |
-| | 4 | 346.9 → 340.7 | 177.9 → 174.4 | 16.8 → 17.1 |
+The module against its own earlier release, both under Bun, per frame,
+lower better:
 
-Against libvpx, as release 0.0.5 under Bun and ffmpeg 7.1's `libvpx-vp9`
-decoder (libvpx 1.15.0) on the same captures, the same cores, alternated,
-medians of three rounds; the cycles are each whole process's, the module's ms
-its own clock's mean over the frames and libvpx's its process's wall time
-over them:
+| Capture | Threads | M cycles, 0.0.3 | M cycles, 0.0.5 | Mean ms, 0.0.3 | Mean ms, 0.0.5 |
+|---|---|---|---|---|---|
+| Windows, 1280×800, 1898 frames | 1 | 69.0 | 66.0 | 21.4 | 20.5 |
+| | 4 | 72.4 | 68.9 | 16.0 | 15.7 |
+| Windows, 1440×900, 1797 frames | 1 | 85.1 | 81.2 | 26.4 | 25.1 |
+| | 4 | 89.4 | 84.6 | 12.3 | 12.0 |
+| Windows, 1600×1000, 2333 frames | 1 | 104.8 | 100.0 | 32.4 | 31.1 |
+| | 4 | 108.5 | 103.3 | 13.7 | 13.4 |
+| Windows, 1920×1080, 1943 frames | 1 | 101.4 | 96.2 | 31.9 | 29.8 |
+| | 4 | 105.3 | 100.8 | 13.3 | 13.7 |
+| a Mac, 2560×1600, 1986 frames | 1 | 154.3 | 147.6 | 48.7 | 46.5 |
+| | 4 | 160.6 | 152.5 | 19.6 | 18.9 |
+| a Mac, 2880×1800, 2245 frames | 1 | 200.1 | 190.4 | 61.9 | 59.6 |
+| | 4 | 213.1 | 205.7 | 23.5 | 22.9 |
+| Windows, 3456×2168, 887 frames | 1 | 272.2 | 256.2 | 98.3 | 87.6 |
+| | 4 | 280.0 | 266.9 | 30.6 | 30.8 |
+| a Mac, 3840×2160, 1443 frames | 1 | 234.5 | 220.3 | 73.1 | 68.6 |
+| | 4 | 249.4 | 234.2 | 28.4 | 27.8 |
+
+The module against libvpx, per frame, lower better: release 0.0.5 in the
+same runs and ffmpeg 7.1's
+`libvpx-vp9` decoder (libvpx 1.15.0) alternated with it; the cycles are each
+whole process's, the module's ms its own clock's mean over the frames and
+libvpx's its process's wall time over them. The command is
+`ffmpeg -threads N -c:v libvpx-vp9 -i FILE -benchmark -f null -`, and the
+build Debian 13's: ffmpeg 7.1.5-0+deb13u1, by gcc 14 with
+`--toolchain=hardened --enable-shared --enable-libvpx`, over its libvpx9
+1.15.0-2.1+deb13u1, configured `--target=x86_64-linux-gcc --enable-pic
+--enable-shared --enable-vp9-highbitdepth --enable-postproc
+--enable-vp9-postproc`, which picks its vector code as it runs, AVX2 on this
+i5-8500T, and whose high bit depth build widens the coefficients of an 8-bit
+stream to 32 bits:
 
 | Capture | Threads | M cycles, libvpx | M cycles, module | Mean ms, libvpx | Mean ms, module |
 |---|---|---|---|---|---|
-| desktop | 1 | 17.8 | 20.5 | 5.9 | 6.8 |
-| | 4 | 18.3 | 22.0 | 5.5 | 3.9 |
-| a Mac's | 1 | 32.2 | 39.5 | 10.0 | 12.5 |
-| | 4 | 32.9 | 41.3 | 9.0 | 6.9 |
-| a shader animation | 1 | 46.3 | 53.5 | 14.4 | 16.7 |
-| | 4 | 46.9 | 55.9 | 12.7 | 9.8 |
-| a Mac screen recording | 1 | 123.1 | 164.3 | 37.8 | 51.1 |
-| | 4 | 127.8 | 169.0 | 24.1 | 16.8 |
+| Windows, 1280×800 | 1 | 59.7 | 66.0 | 18.6 | 20.5 |
+| | 4 | 60.3 | 68.9 | 17.8 | 15.7 |
+| Windows, 1440×900 | 1 | 74.0 | 81.2 | 23.3 | 25.1 |
+| | 4 | 75.4 | 84.6 | 14.7 | 12.0 |
+| Windows, 1600×1000 | 1 | 89.8 | 100.0 | 28.2 | 31.1 |
+| | 4 | 91.2 | 103.3 | 16.7 | 13.4 |
+| Windows, 1920×1080 | 1 | 86.4 | 96.2 | 26.9 | 29.8 |
+| | 4 | 87.9 | 100.8 | 16.2 | 13.7 |
+| a Mac, 2560×1600 | 1 | 130.4 | 147.6 | 40.6 | 46.5 |
+| | 4 | 132.5 | 152.5 | 25.0 | 18.9 |
+| a Mac, 2880×1800 | 1 | 164.2 | 190.4 | 52.4 | 59.6 |
+| | 4 | 173.1 | 205.7 | 21.7 | 22.9 |
+| Windows, 3456×2168 | 1 | 228.7 | 256.2 | 77.5 | 87.6 |
+| | 4 | 236.3 | 266.9 | 29.5 | 30.8 |
+| a Mac, 3840×2160 | 1 | 198.9 | 220.3 | 62.5 | 68.6 |
+| | 4 | 209.2 | 234.2 | 26.7 | 27.8 |
 
-On one thread libvpx, in AVX2, takes 13% to 25% fewer cycles a frame than
-the module in 128-bit vectors. With four threads a stream of one tile column
-gives libvpx's tile threads nothing to split, and it only filters on a
-worker of its own while one thread parses and reconstructs: on the recording
-its four threads keep 1.7 cores busy (8.9 s of user time in 5.3 s of wall).
-The module parses on one thread and reconstructs and filters by rows on the
-others, so its frame takes more cycles and less time, a third to a half
-less.
+On one thread libvpx, in AVX2, takes 9% to 14% fewer cycles a frame than
+the module in 128-bit vectors. With four threads libvpx decodes a tile
+column on each and filters on a worker of its own, so a stream of one
+column or two leaves it little to split: up to 2560 wide the module, which
+parses a column on a thread and reconstructs and filters by rows on the
+others, takes 12% to 24% less time for more cycles. From 2880 wide the
+stream is in four columns, libvpx's four threads each have one, and its
+frame takes 4% to 6% less time than the module's.
 
-On these streams a frame is some hundred thousand tokens in tens of thousands
+On the captures measured before these, a wlshare desktop and animation and
+a Mac's, a frame is some hundred thousand tokens in tens of thousands
 of transform blocks, most of them 4×4 and six to nine in ten with no
 coefficient at all, so what a transform block costs before its first token
 counts for as much as the tokens do. On one thread the loop filter is a
@@ -214,9 +245,17 @@ their own were measured and are not done either. What it does not do yet,
 with what was measured on the way, is in
 [docs/remaining.md](docs/remaining.md).
 
-To benchmark on a busy host, pin both builds to the same cores (`taskset`),
-alternate them, wait for the load to fall before each stream, and read
-`perf stat -e instructions:u,cycles:u` rather than wall time alone.
+The routine measurement of a change is `bench/run.sh [BUILD...]`, some
+minutes: each BUILD is a directory holding a build of the module, `build/out`
+when none is named, or the word `libvpx` for ffmpeg's decoder. It decodes
+five samples of 120 frames, cut from those captures as `screen-vp9` 0.0.10
+codes each size, one from a quiet stretch and four from the busiest, of one
+tile column, two and four. `bench/samples.sh` copies them once from the
+`bench` folder of the artifacts drive to `tmp/bench`, and no run reads the
+drive. The script does what a busy host needs: it pins the builds to the same
+cores (`taskset`), alternates them round by round, waits for the load to fall
+before each stream, and prints `perf stat -e instructions:u,cycles:u` beside
+the times, with the medians of three rounds.
 
 ## Requirements
 
