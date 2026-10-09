@@ -48,6 +48,16 @@ each frame's MD5 as `ffmpeg -f framemd5` does, with the time per frame on
 stderr. Natively the decoder runs its scalar loops, since the SIMD ones are
 written for wasm32.
 
+Those MD5s are of the frame at its own size. ffmpeg's are not where a
+stream changes size: its output stream is set up at the first frame's size,
+and every later frame of another size is resampled to it before `framemd5`
+hashes it or `rawvideo` writes it, so from the keyframe that changes the size
+on, ffmpeg's hashes and pixels describe a rescaled picture, whichever decoder
+it ran. libvpx and its own VP9 decoder then agree with each other and both
+differ from this decoder, which was found once to look like a decoding bug.
+Cut such a stream at that keyframe and hash each piece on its own, and the
+three agree frame for frame.
+
 `bun test` loads `build/out` (or `$VP9_WASM_DIR`) under Bun as the page loads
 it: the module on a shared memory, its pool's threads as workers that each run
 an instance of it. Every 4:4:4 stream in `test/data`, libvpx's output under

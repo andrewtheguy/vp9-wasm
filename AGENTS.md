@@ -15,6 +15,9 @@ and build details belong in the [README](README.md).
 - After test changes, run `bun test` and `bun run typecheck`, once each.
 - Run `bun run fixtures` only when a spec in `test/fixtures.ts` changes, and
   commit what it writes to `test/data`.
+- A stream that changes size mid-way is checked against ffmpeg's hashes in
+  pieces, cut at the keyframe that changes it: ffmpeg rescales every frame
+  after that to the first frame's size before hashing (see the README).
 - To measure a change, run `bench/run.sh BASE build/out`, minutes on short
   samples. Run whole captures only when asked, and never read a stream from
   the artifacts drive: copy it under `tmp/` first.
