@@ -4,12 +4,12 @@
 //! where the three planes share their edges.
 
 use crate::frame::{ModeInfo, B_HEIGHT_LOG2, B_WIDTH_LOG2, NUM_8X8_HIGH, NUM_8X8_WIDE};
-use crate::header::FrameHeader;
+use crate::header::{FrameHeader, SEG_LVL_ALT_LF, Segments};
 use crate::loopfilter::*;
 
 pub(crate) struct LoopFilter {
-    /// [reference][whether the mode is one with a motion vector]
-    lvl: [[u8; 2]; 4],
+    /// [segment][reference][whether the mode is one with a motion vector]
+    lvl: [[[u8; 2]; 4]; 8],
     lim: [u8; 64],
     mblim: [u8; 64],
 }
@@ -28,9 +28,9 @@ pub(crate) struct Filtered {
 unsafe impl Sync for Filtered {}
 
 impl LoopFilter {
-    pub fn new(h: &FrameHeader, ref_deltas: [i8; 4], mode_deltas: [i8; 2]) -> LoopFilter {
+    pub fn new(h: &FrameHeader, seg: &Segments, ref_deltas: [i8; 4], mode_deltas: [i8; 2]) -> LoopFilter {
         let level = h.lf_level as i32;
-        let mut lf = LoopFilter { lvl: [[h.lf_level; 2]; 4], lim: [0; 64], mblim: [0; 64] };
+        let mut lf = LoopFilter { lvl: [[[0; 2]; 4]; 8], lim: [0; 64], mblim: [0; 64] };
         for lvl in 0..64 {
             let sharp = h.lf_sharpness as i32;
             let mut inside = lvl as i32 >> ((sharp > 0) as i32 + (sharp > 4) as i32);
@@ -41,12 +41,20 @@ impl LoopFilter {
             lf.lim[lvl] = inside as u8;
             lf.mblim[lvl] = (2 * (lvl as i32 + 2) + inside) as u8;
         }
-        if h.lf_delta_enabled {
-            let scale = 1 << (level >> 5);
-            lf.lvl[0] = [(level + ref_deltas[0] as i32 * scale).clamp(0, 63) as u8; 2];
-            for r in 1..4 {
-                for m in 0..2 {
-                    lf.lvl[r][m] = (level + ref_deltas[r] as i32 * scale + mode_deltas[m] as i32 * scale).clamp(0, 63) as u8;
+        // The deltas are scaled by the frame's level, whatever a segment's.
+        let scale = 1 << (level >> 5);
+        for (segment, lvl) in lf.lvl.iter_mut().enumerate() {
+            let level = match seg.feature(segment as u8, SEG_LVL_ALT_LF) {
+                Some(d) => (if seg.features.absolute { d as i32 } else { level + d as i32 }).clamp(0, 63),
+                None => level,
+            };
+            *lvl = [[level as u8; 2]; 4];
+            if h.lf_delta_enabled {
+                lvl[0] = [(level + ref_deltas[0] as i32 * scale).clamp(0, 63) as u8; 2];
+                for r in 1..4 {
+                    for m in 0..2 {
+                        lvl[r][m] = (level + ref_deltas[r] as i32 * scale + mode_deltas[m] as i32 * scale).clamp(0, 63) as u8;
+                    }
                 }
             }
         }
@@ -83,7 +91,7 @@ impl LoopFilter {
                 let skip_c = skip_this && !edge_left;
                 let edge_above = if B_HEIGHT_LOG2[sb] > 0 { r & (NUM_8X8_HIGH[sb] as usize - 1) == 0 } else { true };
                 let skip_r = skip_this && !edge_above;
-                let level = self.lvl[mi.ref_frame as usize & 3][matches!(mi.mode, 10 | 11 | 13) as usize];
+                let level = self.lvl[mi.segment_id as usize & 7][mi.ref_frame as usize & 3][matches!(mi.mode, 10 | 11 | 13) as usize];
                 lfl[r * 8 + c] = level;
                 if level == 0 {
                     continue;

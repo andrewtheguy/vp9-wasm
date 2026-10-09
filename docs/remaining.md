@@ -56,9 +56,13 @@ nothing below is large. In the order the work would go:
 ## Coverage
 
 The gateway's nine captures decode bit for bit, and none trips a refusal.
-A reference of another size, a frame shown again, compound prediction or
-segmentation would be refused by name, and nothing is known to produce
-them.
+A reference of another size, a frame shown again or compound prediction
+would be refused by name, and nothing is known to produce them. Segmentation
+is decoded, since screen-vp9 0.0.12 codes a frame told where the picture
+changed through libvpx's active map; the two `active-map` fixtures are what
+that writes, checked against libvpx's decode, and the thirteen frames of the
+gateway's sequence at three sizes were compared with libvpx plane by plane
+when it was added.
 
 ## Robustness
 

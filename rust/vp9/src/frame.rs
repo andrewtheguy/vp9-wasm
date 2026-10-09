@@ -38,6 +38,11 @@ pub struct ModeInfo {
     pub ref_frame: u8,
     /// 3 for an intra block.
     pub interp_filter: u8,
+    /// The segment the block is in: 0 without segmentation.
+    pub segment_id: u8,
+    /// The block's segment was coded as the last map's, which is the context
+    /// of the blocks after it coding theirs so.
+    pub seg_id_predicted: bool,
     pub mv: Mv,
     /// A block under 8×8 has four of each; the one that applies is set.
     pub sub_mv: [Mv; 4],
