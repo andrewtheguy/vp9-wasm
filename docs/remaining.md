@@ -261,8 +261,31 @@ capture without the filter is quality 97 for 90, 34% more bytes, and then
 So `screen-vp9` 0.0.9 leaves the filter out of a 4:4:4 stream in four tile
 columns or more, 2880 wide on four threads, and keeps it elsewhere. Not
 measured: more than four decoding threads, which a page with eight cores
-gets, and the picture by eye. The first 300 frames are also the quiet end
-of each capture, whose later frames run to five and ten times the bytes.
+gets, and the picture by eye.
+
+The first 300 frames are the quiet end of each capture, 40 to 150 KB a
+frame. The 300 that took the most bytes, 290 KB to 1.2 MB a frame, were
+coded again the same way from a keyframe, and libvpx's decoder timed beside
+the module:
+
+| busiest 300 | tile columns | bytes | luma dB | M cycles | ms on four | libvpx, ms on four |
+| --- | --- | --- | --- | --- | --- | --- |
+| Windows, 1280×800 | 1 | +0.4% | 43.31 → 42.98 | 142.4 → 126.8 | 34.0 → 35.6 | 39.2 → 38.2 |
+| Windows, 1440×900 | 2 | +0.7% | 43.34 → 43.00 | 162.0 → 142.3 | 23.1 → 23.2 | 25.7 → 24.1 |
+| Windows, 1600×1000 | 2 | +0.2% | 43.37 → 43.00 | 194.7 → 170.4 | 26.2 → 26.1 | 30.4 → 27.6 |
+| Windows, 1920×1080 | 2 | +1.2% | 43.44 → 43.07 | 236.1 → 207.0 | 31.0 → 32.9 | 38.1 → 34.3 |
+| Mac, 2560×1600 | 2 | +1.1% | 44.96 → 44.40 | 355.2 → 298.3 | 44.1 → 40.9 | 54.3 → 46.6 |
+| Mac, 2560×1600 | 4 | +1.3% | 44.90 → 44.35 | 356.4 → 300.6 | 39.1 → 29.4 | 30.9 → 27.2 |
+| Mac, 2880×1800 | 4 | +0.8% | 44.81 → 44.34 | 560.1 → 480.8 | 62.9 → 46.3 | 47.8 → 44.6 |
+| Windows, 3456×2168 | 4 | +0.5% | 48.13 → 47.79 | 433.7 → 371.9 | 49.2 → 42.4 | 49.3 → 44.6 |
+| Mac, 3840×2160 | 4 | +1.1% | 46.80 → 46.23 | 557.9 → 468.3 | 65.0 → 47.7 | 52.5 → 46.9 |
+
+A busy frame is mostly coefficients, so the filter is less of it and of the
+stream: 11% to 16% of one thread's cycles, 0.2% to 1.3% of the bytes, 0.3
+to 0.6 dB. The line holds: four threads gain 14% to 27% in four columns and
+nothing to speak of in one or two. In four columns without the filter the
+module's four threads and libvpx's are within 8% of each other, where with it
+libvpx's are ahead by up to a quarter.
 
 Four columns under 2880 wide were tried on the 2560×1600 capture, the same
 300 frames, the columns forced in a copy of `screen-vp9`:
@@ -278,9 +301,11 @@ The columns themselves cost 0.1% of the bytes, nothing of the picture and
 1% of one thread's cycles, and the encoder's four threads code them a
 tenth faster. With the filter the decoder's four threads get nothing from
 them; without it the frame is 6.1 ms for 9.3, a third less, as from 2880
-wide. So a 2560-wide stream in four columns without the filter would trade
-4.5% of the bytes and 0.8 dB for that third. That is `screen-vp9`'s tile
-rule to change and is not done.
+wide. On the busiest 300, in the table above, four columns cost 1.0% of
+the bytes, the encoder codes them 14% faster, and four columns without the
+filter are 29.4 ms for the 44.1 of two with it, for 2.3% of the bytes and
+0.6 dB. So `screen-vp9` 0.0.10 codes four columns from 2560 wide, and with
+them leaves the filter out there.
 
 ### 4. The rest
 
