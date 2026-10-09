@@ -304,8 +304,19 @@ them; without it the frame is 6.1 ms for 9.3, a third less, as from 2880
 wide. On the busiest 300, in the table above, four columns cost 1.0% of
 the bytes, the encoder codes them 14% faster, and four columns without the
 filter are 29.4 ms for the 44.1 of two with it, for 2.3% of the bytes and
-0.6 dB. So `screen-vp9` 0.0.10 codes four columns from 2560 wide, and with
-them leaves the filter out there.
+0.6 dB.
+
+A 2048×1536 capture of the same Mac says the same, two columns with the
+filter against four without it: 8.1 ms on four threads and 5.3 on its quiet
+300, for 4.1% of the bytes and 0.9 dB, and 45.1 and 28.1 on its busiest,
+for 2.2% and 0.5 dB, of which the columns are 0.1% and 1.4% of the bytes.
+libvpx's four threads go from 51.9 ms to 27.0 on the busy frames. The
+Windows capture at 1920×1080 does not: its busy frames are 28% faster on
+four threads in four columns without the filter, 22.6 ms for 31.3, and 16%
+larger, 15% of it the columns alone, whether for their 480 samples or for
+what is on that desktop. So `screen-vp9` 0.0.10 codes four columns from
+2048 wide, and with them leaves the filter out there. Not measured: the
+widths between.
 
 ### 4. The rest
 
