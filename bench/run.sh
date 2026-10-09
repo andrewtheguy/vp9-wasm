@@ -9,7 +9,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ $# -gt 0 ] || set -- build/out
-rounds=${ROUNDS:-3} frames=${FRAMES:-100000}
+rounds=${ROUNDS:-3}
+# FRAMES=all, the default, is no limit: neither decoder is then given a count.
+limit=() fflimit=()
+[ "${FRAMES:-all}" = all ] || { limit=("$FRAMES") fflimit=(-frames:v "$FRAMES"); }
 dir=$(bench/samples.sh)
 samples=${SAMPLES:-$(cd "$dir" && ls *.ivf | sed 's/\.ivf$//')}
 
@@ -24,7 +27,7 @@ quiet() {
 
 for s in $samples; do
   [ "$1" = libvpx ] && break
-  VP9_WASM_DIR=$1 CHECK=1 bun bench/decode.ts "$dir/$s.ivf" 4 "$frames" | sed "s|^|$s: |"
+  VP9_WASM_DIR=$1 CHECK=1 bun bench/decode.ts "$dir/$s.ivf" 4 "${limit[@]}" | sed "s|^|$s: |"
 done
 
 log=$(mktemp); trap 'rm -f "$log"' EXIT
@@ -35,12 +38,12 @@ for t in ${THREADS:-1 4}; do
     for ((r = 0; r < rounds; r++)); do
       for b in "$@"; do
         if [ "$b" = libvpx ]; then
-          out=$(taskset -c "$cpus" perf stat -e instructions:u,cycles:u -x, ffmpeg -hide_banner -nostats -threads "$t" -c:v libvpx-vp9 -i "$dir/$s.ivf" -frames:v "$frames" -benchmark -f null - 2>&1)
+          out=$(taskset -c "$cpus" perf stat -e instructions:u,cycles:u -x, ffmpeg -hide_banner -nostats -threads "$t" -c:v libvpx-vp9 -i "$dir/$s.ivf" "${fflimit[@]}" -benchmark -f null - 2>&1)
           n=$(grep -o 'frame= *[0-9]*' <<<"$out" | tail -1 | tr -dc 0-9)
           # Its wall time over the frames; ffmpeg gives no time per frame, so the median is the mean.
           mean=$(grep -o 'rtime=[0-9.]*' <<<"$out" | cut -d= -f2 | awk -v n="$n" '{print $1 * 1000 / n}'); median=$mean
         else
-          out=$(VP9_WASM_DIR=$b taskset -c "$cpus" perf stat -e instructions:u,cycles:u -x, bun bench/decode.ts "$dir/$s.ivf" "$t" "$frames" 2>&1)
+          out=$(VP9_WASM_DIR=$b taskset -c "$cpus" perf stat -e instructions:u,cycles:u -x, bun bench/decode.ts "$dir/$s.ivf" "$t" "${limit[@]}" 2>&1)
           n=$(grep -o '^[0-9]* pictures' <<<"$out" | cut -d' ' -f1)
           mean=$(grep -o 'mean [0-9.]*' <<<"$out" | cut -d' ' -f2); median=$(grep -o 'median [0-9.]*' <<<"$out" | cut -d' ' -f2)
         fi
