@@ -6,8 +6,9 @@
 //!
 //! With VP9_STATS set, each frame also gets a line on stderr of what its blocks
 //! were coded as: the share of its 8×8s that are the last frame's samples in
-//! place (`still`), in libvpx's inactive segment, intra, and with
-//! coefficients, and how many of its 64×64 blocks hold anything but still ones.
+//! place (`still`), in libvpx's inactive segment, intra, and not skipped (their
+//! residual is coded, though each transform block of it may hold no
+//! coefficient), and how many of its 64×64 blocks hold anything but still ones.
 
 mod md5;
 
@@ -68,12 +69,12 @@ fn main() {
                         if stats {
                             let (mi, cols) = f.blocks();
                             let rows = mi.len() / cols;
-                            let (mut still, mut inactive, mut intra, mut coded) = (0, 0, 0, 0);
+                            let (mut still, mut inactive, mut intra, mut unskipped) = (0, 0, 0, 0);
                             for m in mi {
                                 still += m.still() as usize;
                                 inactive += (m.segment_id == 7) as usize;
                                 intra += !m.is_inter() as usize;
-                                coded += !m.skip as usize;
+                                unskipped += !m.skip as usize;
                             }
                             let (sb_cols, sb_rows) = (cols.div_ceil(8), rows.div_ceil(8));
                             let touched = (0..sb_rows * sb_cols)
@@ -84,14 +85,14 @@ fn main() {
                                 .count();
                             let pct = |n: usize| 100.0 * n as f64 / mi.len() as f64;
                             eprintln!(
-                                "frame {}: {} bytes{}, still {:.1}%, inactive {:.1}%, intra {:.1}%, coded {:.1}%, 64x64 blocks touched {touched}/{}",
+                                "frame {}: {} bytes{}, still {:.1}%, inactive {:.1}%, intra {:.1}%, not skipped {:.1}%, 64x64 blocks touched {touched}/{}",
                                 times.len() - 1,
                                 unit.len(),
                                 if d.keyframe { ", keyframe" } else { "" },
                                 pct(still),
                                 pct(inactive),
                                 pct(intra),
-                                pct(coded),
+                                pct(unskipped),
                                 sb_rows * sb_cols
                             );
                         }
