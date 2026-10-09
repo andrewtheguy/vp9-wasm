@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::error::{Error, Result};
 use crate::frame::Frame;
-use crate::header::{self, Colour, FrameHeader, Size, SWITCHABLE, TX_MODE_SELECT};
+use crate::header::{self, Colour, FrameHeader, SEG_LVL_ALT_Q, SWITCHABLE, SegmentFeatures, Segments, Size, TX_MODE_SELECT};
 use crate::lf::{Filtered, LoopFilter};
 use crate::probs::{Counts, Probs};
 use crate::tables::{AC_QLOOKUP, DC_QLOOKUP};
@@ -58,6 +58,13 @@ pub struct Decoder {
     prev: Option<Arc<Frame>>,
     above_nz: [Vec<u8>; 3],
     above_part: Vec<u8>,
+    /// The segment features in force, which a frame may leave as they are.
+    seg_features: SegmentFeatures,
+    /// The segment of each 8×8 of the last frame coded in segments, which the
+    /// next so coded may take its blocks' from, and the map that frame
+    /// writes; `seg_last` says which is which.
+    seg_maps: [Vec<u8>; 2],
+    seg_last: usize,
     /// Each tile column's rows of coefficients, between their parsing and
     /// their reconstruction.
     rows: Vec<RowCell>,
@@ -82,6 +89,9 @@ impl Decoder {
             prev: None,
             above_nz: Default::default(),
             above_part: Vec::new(),
+            seg_features: SegmentFeatures::default(),
+            seg_maps: [Vec::new(), Vec::new()],
+            seg_last: 0,
             rows: Vec::new(),
             broken: false,
         }
@@ -196,14 +206,35 @@ impl Decoder {
         let mut probs = pre.clone();
         let tx_mode = header::compressed(compressed, &h, &mut probs)?.tx_mode;
 
+        // The segment features: cleared where the frame leaves the past
+        // behind, then the frame's own where it states them. The maps are
+        // cleared with the features, and with a size they are not the size of.
+        let mut seg_features = if h.intra() || h.error_resilient { SegmentFeatures::default() } else { self.seg_features };
+        if let Some(features) = h.segmentation.update_data {
+            seg_features = features;
+        }
+        let seg = Segments::new(&h.segmentation, seg_features);
+        let cells = width.div_ceil(8) * height.div_ceil(8);
+        for map in &mut self.seg_maps {
+            if map.len() != cells {
+                map.clear();
+                if map.try_reserve_exact(cells).is_err() {
+                    return Err(Error::unsupported(format!("a {width}x{height} frame, whose segment map the memory has no room for")));
+                }
+                map.resize(cells, 0);
+            } else if h.intra() || h.error_resilient {
+                map.fill(0);
+            }
+        }
+
         let use_prev_mvs = !h.error_resilient && width == self.last.width && height == self.last.height && !self.last.intra_only && self.last.shown && !self.last.keyframe;
         let prev = self.prev.clone().filter(|_| use_prev_mvs && !h.intra());
         let refs_held: [Option<Arc<Frame>>; 3] = std::array::from_fn(|i| if h.intra() { None } else { self.refs[h.ref_slots[i]].clone() });
 
         let mut frame = self.fresh_frame(width, height)?;
         frame.colour = h.colour.unwrap_or(self.colour);
-        let lf = (h.lf_level != 0).then(|| LoopFilter::new(&h, ref_deltas, mode_deltas));
-        let counts = self.decode_rows(&h, tx_mode, &probs, tiles, &mut frame, &refs_held, prev.as_deref(), lf.as_ref())?;
+        let lf = (h.lf_level != 0).then(|| LoopFilter::new(&h, &seg, ref_deltas, mode_deltas));
+        let counts = self.decode_rows(&h, tx_mode, &probs, &seg, tiles, &mut frame, &refs_held, prev.as_deref(), lf.as_ref())?;
 
         if !h.error_resilient && !h.frame_parallel {
             let mut adapted = probs.clone();
@@ -223,6 +254,12 @@ impl Decoder {
             self.contexts[context_idx] = probs;
         }
         (self.lf_ref_deltas, self.lf_mode_deltas) = (ref_deltas, mode_deltas);
+        self.seg_features = seg_features;
+        // The map this frame wrote is the last one, for the next frame coded
+        // in segments; a frame coded without leaves the maps as they were.
+        if seg.enabled {
+            self.seg_last ^= 1;
+        }
         self.colour = frame.colour;
         let frame = Arc::new(frame);
         for (i, slot) in self.refs.iter_mut().enumerate() {
@@ -239,7 +276,7 @@ impl Decoder {
     /// The frame's samples: its tiles parsed, and its rows of 64×64 blocks
     /// reconstructed and then filtered, each stage as far behind the one
     /// before as what it reads requires.
-    fn decode_rows(&mut self, h: &FrameHeader, tx_mode: u8, probs: &Probs, mut data: &[u8], frame: &mut Frame, refs: &[Option<Arc<Frame>>; 3], prev: Option<&Frame>, lf: Option<&LoopFilter>) -> Result<Box<Counts>> {
+    fn decode_rows(&mut self, h: &FrameHeader, tx_mode: u8, probs: &Probs, seg: &Segments, mut data: &[u8], frame: &mut Frame, refs: &[Option<Arc<Frame>>; 3], prev: Option<&Frame>, lf: Option<&LoopFilter>) -> Result<Box<Counts>> {
         let (mi_cols, mi_rows) = (frame.mi_cols, frame.mi_rows);
         let sb_cols = mi_cols.div_ceil(8);
         let sb_rows = mi_rows.div_ceil(8);
@@ -275,9 +312,17 @@ impl Decoder {
             self.rows.resize_with(tile_cols * sb_rows, || RowCell(Default::default()));
         }
 
-        let q = h.base_qindex as i32;
-        let dc = |delta: i32| DC_QLOOKUP[(q + delta).clamp(0, 255) as usize];
-        let ac = |delta: i32| AC_QLOOKUP[(q + delta).clamp(0, 255) as usize];
+        // Each segment's quantizer: the frame's, or where the segment has its
+        // own, that one.
+        let base = h.base_qindex as i32;
+        let qindex = |segment: usize| match seg.feature(segment as u8, SEG_LVL_ALT_Q) {
+            Some(d) => (if seg.features.absolute { d as i32 } else { base + d as i32 }).clamp(0, 255),
+            None => base,
+        };
+        let dc = |q: i32, delta: i32| DC_QLOOKUP[(q + delta).clamp(0, 255) as usize];
+        let ac = |q: i32, delta: i32| AC_QLOOKUP[(q + delta).clamp(0, 255) as usize];
+        let [map_a, map_b] = &mut self.seg_maps;
+        let (seg_last, seg_cur) = if self.seg_last == 0 { (map_a.as_ptr(), map_b.as_mut_ptr()) } else { (map_b.as_ptr(), map_a.as_mut_ptr()) };
         let f = FrameCtx {
             h,
             tx_mode,
@@ -292,9 +337,15 @@ impl Decoder {
             refs: std::array::from_fn(|r| std::array::from_fn(|p| refs[r].as_ref().map_or(std::ptr::null(), |f| f.planes[p].data.as_ptr()))),
             mi: frame.mi.as_mut_ptr(),
             prev_mi: prev.map_or(std::ptr::null(), |p| p.mi.as_ptr()),
+            seg: *seg,
+            seg_last,
+            seg_cur,
             above_nz: std::array::from_fn(|p| self.above_nz[p].as_mut_ptr()),
             above_part: self.above_part.as_mut_ptr(),
-            dequant: [[dc(h.y_dc_delta), ac(0)], [dc(h.uv_dc_delta), ac(h.uv_ac_delta)]],
+            dequant: std::array::from_fn(|segment| {
+                let q = qindex(segment);
+                [[dc(q, h.y_dc_delta), ac(q, 0)], [dc(q, h.uv_dc_delta), ac(q, h.uv_ac_delta)]]
+            }),
             tile_starts: (0..=tile_cols).map(|i| offset(i, sb_cols, h.log2_tile_cols, mi_cols)).collect(),
             rows: &self.rows,
             sb_rows,
@@ -532,6 +583,37 @@ mod tests {
         assert_eq!(d.decode(key).unwrap().unwrap().frame.colour.space, 2);
         assert!(d.decode(&intra).unwrap().is_none());
         assert_eq!(d.decode(inter).unwrap().unwrap().frame.colour.space, 1);
+    }
+
+    /// The fixture screen-vp9 writes as the gateway drives it: a keyframe,
+    /// frames told where the picture changed, a whole frame, a keyframe
+    /// forced in the middle, and the dial moved.
+    #[test]
+    fn a_stream_told_where_the_picture_changed_decodes_through_its_segments() {
+        let file: &[u8] = include_bytes!("../../../test/data/active-map-330x194.ivf");
+        let mut frames = Vec::new();
+        let mut at = 32;
+        while at + 12 <= file.len() {
+            let len = u32::from_le_bytes(file[at..at + 4].try_into().unwrap()) as usize;
+            frames.push(&file[at + 12..at + 12 + len]);
+            at += 12 + len;
+        }
+        assert_eq!(frames.len(), 13);
+        let mut d = Decoder::new(1);
+        let mut keyframes = Vec::new();
+        for (i, frame) in frames.iter().enumerate() {
+            let h = header::uncompressed(frame, |_| Some(330)).unwrap();
+            // Every frame told where the picture changed is in segments, and
+            // so is the whole frame after one, with no feature in force; the
+            // keyframes are not, nor is the whole frame after the dial moved,
+            // which libvpx starts afresh.
+            assert_eq!(h.segmentation.enabled, ![0, 7, 11].contains(&i), "frame {i}");
+            let shown = d.decode(frame).unwrap_or_else(|e| panic!("frame {i}: {e}")).expect("every frame is shown");
+            if shown.keyframe {
+                keyframes.push(i);
+            }
+        }
+        assert_eq!(keyframes, [0, 7]);
     }
 
     #[test]

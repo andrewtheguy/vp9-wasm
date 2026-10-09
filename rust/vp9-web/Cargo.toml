@@ -8,7 +8,7 @@
 # module decodes on (.cargo/config.toml).
 [package]
 name = "vp9-web"
-version = "0.0.6"
+version = "0.0.7"
 license = "BSD-3-Clause"
 edition = "2024"
 publish = false

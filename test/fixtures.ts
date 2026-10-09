@@ -17,6 +17,11 @@ export interface FixtureSpec {
   encoder?: string[];
   // Options after the encoder's.
   extra?: string[];
+  // The stream is written by test/screen-vp9 instead: screen-vp9 told where
+  // the picture changed, as remotex and wlshare code theirs, on this many
+  // threads, which decide its tile columns. `frames`, `source`, `encoder`
+  // and `extra` are ffmpeg's and do not apply.
+  screenVp9?: { threads: number };
 }
 
 export interface Fixture {
@@ -104,6 +109,16 @@ export const SPECS = {
   // for a stream like this one.
   "adapting-330x194": { size: "330x194", pixFmt: "yuv444p", extra: ["-frame-parallel", "0"] },
   "bt709-full-160x96": { size: "160x96", pixFmt: "yuv444p", frames: 2, extra: ["-colorspace", "bt709", "-color_range", "pc"] },
+  // A frame told where the picture changed, which libvpx codes through its
+  // active map: segmentation, with a segment that skips and is not loop
+  // filtered over the blocks outside the change, its map coded whole or as
+  // the last frame's, and segmentation left on with no feature in force by
+  // the whole frame after. ffmpeg has no way to ask libvpx for it, so
+  // test/screen-vp9 writes these as the remotex gateway drives the encoder.
+  "active-map-330x194": { size: "330x194", pixFmt: "yuv444p", screenVp9: { threads: 2 } },
+  // The same in four tile columns, parsed side by side, without the loop
+  // filter.
+  "active-map-2048x66": { size: "2048x66", pixFmt: "yuv444p", screenVp9: { threads: 4 } },
   // What the decoder refuses: 4:2:0, which a browser decodes itself.
   "yuv420p-330x194": { size: "330x194", pixFmt: "yuv420p", frames: 4 },
 } satisfies Record<string, FixtureSpec>;

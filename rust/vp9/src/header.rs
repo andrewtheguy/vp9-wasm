@@ -10,6 +10,74 @@ pub const SWITCHABLE: u8 = 4;
 /// `tx_mode` of a frame whose blocks each code their own transform size.
 pub const TX_MODE_SELECT: u8 = 4;
 
+/// The segment features, by their place in a segment's four: an alternate
+/// quantizer, an alternate loop filter level, a reference frame, and a skip,
+/// which is no residual and no motion.
+pub const SEG_LVL_ALT_Q: usize = 0;
+pub const SEG_LVL_ALT_LF: usize = 1;
+pub const SEG_LVL_REF_FRAME: usize = 2;
+pub const SEG_LVL_SKIP: usize = 3;
+/// Each feature's data: how many bits it is coded in, and whether a sign
+/// follows them.
+const SEG_FEATURE_BITS: [(u32, bool); 4] = [(8, true), (6, true), (2, false), (0, false)];
+
+/// The eight segments' features: per segment, per feature, its data where
+/// the feature is on.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct SegmentFeatures {
+    /// Whether the data is the value itself, rather than a change to the
+    /// frame's.
+    pub absolute: bool,
+    pub data: [[Option<i16>; 4]; 8],
+}
+
+/// A frame's segmentation, as its uncompressed header codes it.
+#[derive(Clone, Copy, Debug)]
+pub struct Segmentation {
+    pub enabled: bool,
+    /// Whether each block codes its segment, or has the one the last map
+    /// gives it.
+    pub update_map: bool,
+    /// Whether a block may code its segment as the last map's.
+    pub temporal_update: bool,
+    pub tree_probs: [u8; 7],
+    pub pred_probs: [u8; 3],
+    /// The features this frame puts in force, where it does; the frame
+    /// before's stay in force otherwise.
+    pub update_data: Option<SegmentFeatures>,
+}
+
+impl Default for Segmentation {
+    fn default() -> Self {
+        Segmentation { enabled: false, update_map: false, temporal_update: false, tree_probs: [255; 7], pred_probs: [255; 3], update_data: None }
+    }
+}
+
+/// Segmentation as a frame decodes under it: its header's, with the
+/// features in force, its own or carried from a frame before.
+#[derive(Clone, Copy)]
+pub struct Segments {
+    pub enabled: bool,
+    pub update_map: bool,
+    pub temporal_update: bool,
+    pub tree_probs: [u8; 7],
+    pub pred_probs: [u8; 3],
+    pub features: SegmentFeatures,
+}
+
+impl Segments {
+    pub fn new(s: &Segmentation, features: SegmentFeatures) -> Self {
+        Segments { enabled: s.enabled, update_map: s.update_map, temporal_update: s.temporal_update, tree_probs: s.tree_probs, pred_probs: s.pred_probs, features }
+    }
+
+    /// `feature`'s data for `segment`, where segmentation is on and so is
+    /// the feature.
+    #[inline]
+    pub fn feature(&self, segment: u8, feature: usize) -> Option<i16> {
+        if self.enabled { self.features.data[segment as usize & 7][feature] } else { None }
+    }
+}
+
 /// The colour a keyframe states, as VP9 codes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Colour {
@@ -57,6 +125,7 @@ pub struct FrameHeader {
     pub uv_dc_delta: i32,
     pub uv_ac_delta: i32,
     pub lossless: bool,
+    pub segmentation: Segmentation,
     pub log2_tile_cols: u32,
     pub log2_tile_rows: u32,
     /// Bytes of the uncompressed header and of the compressed one after it.
@@ -120,6 +189,40 @@ fn delta_q(r: &mut BitReader) -> Result<i32> {
     if r.flag()? { r.signed(4) } else { Ok(0) }
 }
 
+/// `segmentation_params`: whether the frame's blocks are in segments, how
+/// their segments are coded, and the features that replace those in force.
+fn segmentation(r: &mut BitReader) -> Result<Segmentation> {
+    let mut s = Segmentation { enabled: r.flag()?, ..Segmentation::default() };
+    if !s.enabled {
+        return Ok(s);
+    }
+    s.update_map = r.flag()?;
+    if s.update_map {
+        for p in &mut s.tree_probs {
+            *p = if r.flag()? { r.literal(8)? as u8 } else { 255 };
+        }
+        s.temporal_update = r.flag()?;
+        if s.temporal_update {
+            for p in &mut s.pred_probs {
+                *p = if r.flag()? { r.literal(8)? as u8 } else { 255 };
+            }
+        }
+    }
+    if r.flag()? {
+        let mut features = SegmentFeatures { absolute: r.flag()?, data: Default::default() };
+        for segment in &mut features.data {
+            for (feature, (bits, signed)) in segment.iter_mut().zip(SEG_FEATURE_BITS) {
+                if r.flag()? {
+                    let v = r.literal(bits)? as i16;
+                    *feature = Some(if signed && r.flag()? { -v } else { v });
+                }
+            }
+        }
+        s.update_data = Some(features);
+    }
+    Ok(s)
+}
+
 /// The uncompressed header. `mi_cols_of` gives a size's width in 8-sample
 /// units once the size is known, which the tile layout is coded against; a
 /// size named by reference is resolved through `ref_width`.
@@ -160,6 +263,7 @@ pub fn uncompressed(data: &[u8], ref_width: impl Fn(usize) -> Option<u32>) -> Re
         uv_dc_delta: 0,
         uv_ac_delta: 0,
         lossless: false,
+        segmentation: Segmentation::default(),
         log2_tile_cols: 0,
         log2_tile_rows: 0,
         header_bytes: 0,
@@ -244,9 +348,7 @@ pub fn uncompressed(data: &[u8], ref_width: impl Fn(usize) -> Option<u32>) -> Re
     h.uv_ac_delta = delta_q(&mut r)?;
     h.lossless = h.base_qindex == 0 && h.y_dc_delta == 0 && h.uv_dc_delta == 0 && h.uv_ac_delta == 0;
 
-    if r.flag()? {
-        return Err(Error::unsupported("segmentation"));
-    }
+    h.segmentation = segmentation(&mut r)?;
 
     let sb_cols = width.div_ceil(64);
     let mut min_log2 = 0;

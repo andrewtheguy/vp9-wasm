@@ -7,7 +7,7 @@
 use crate::bits::{BoolDecoder, Source, Window};
 use crate::error::{Error, Result};
 use crate::frame::*;
-use crate::header::{FrameHeader, SWITCHABLE, TX_MODE_SELECT};
+use crate::header::{FrameHeader, SEG_LVL_REF_FRAME, SEG_LVL_SKIP, SWITCHABLE, Segments, TX_MODE_SELECT};
 use crate::probs::*;
 use crate::tables::*;
 use std::cell::UnsafeCell;
@@ -55,11 +55,16 @@ pub(crate) struct FrameCtx<'a> {
     pub mi: *mut ModeInfo,
     /// The previous frame's modes, when its motion vectors are candidates.
     pub prev_mi: *const ModeInfo,
+    pub seg: Segments,
+    /// The segment of each 8×8 in the last frame coded in segments, and in
+    /// this one: `mi_rows` rows of `mi_cols`.
+    pub seg_last: *const u8,
+    pub seg_cur: *mut u8,
     /// Per plane, whether each 4×4 column's last block above had coefficients.
     pub above_nz: [*mut u8; 3],
     pub above_part: *mut u8,
-    /// [luma, chroma][DC, AC]
-    pub dequant: [[i16; 2]; 2],
+    /// [segment][luma, chroma][DC, AC]
+    pub dequant: [[[i16; 2]; 2]; 8],
     /// Where each tile column starts, in 8×8 units, and the frame's width
     /// after the last.
     pub tile_starts: Vec<usize>,
@@ -69,8 +74,13 @@ pub(crate) struct FrameCtx<'a> {
 }
 
 // SAFETY: the pointers are to buffers that outlive the frame's decoding, and
-// tiles touch disjoint columns of them.
+// tiles touch disjoint columns of them; the last segment map is only read.
 unsafe impl Sync for FrameCtx<'_> {}
+
+/// The tree a block's segment is coded as: three booleans, the first with
+/// the first probability, the second with one of the next two, the third
+/// with one of the last four.
+const SEGMENT_TREE: [i8; 14] = [2, 4, 6, 8, 10, 12, 0, -1, -2, -3, -4, -5, -6, -7];
 
 /// The transform an intra mode's residual is coded with.
 pub(crate) const INTRA_TX_TYPE: [u8; 10] = [0, 1, 2, 0, 3, 1, 2, 2, 1, 3];
@@ -342,8 +352,10 @@ impl<'a> Tile<'a> {
 
         let mut mi = ModeInfo { sb_type: bsize, ..ModeInfo::default() };
         if f.h.intra() {
+            mi.segment_id = self.intra_segment_id(x_mis, y_mis);
             self.intra_frame_mode_info(&mut mi);
         } else {
+            self.inter_segment_id(&mut mi, x_mis, y_mis);
             self.inter_frame_mode_info(&mut mi)?;
         }
 
@@ -399,7 +411,90 @@ impl<'a> Tile<'a> {
         Ok(())
     }
 
-    fn skip_flag(&mut self) -> bool {
+    /// The block's segment, coded as the tree.
+    fn read_segment_id(&mut self) -> u8 {
+        self.r.tree(&SEGMENT_TREE, &self.f.seg.tree_probs) as u8
+    }
+
+    /// The segment map's cells of the block, `x_mis` by `y_mis` inside the
+    /// frame, at `at`.
+    #[inline]
+    fn segment_cells(&self, at: *const u8, x_mis: usize, y_mis: usize) -> impl Iterator<Item = *const u8> {
+        let (mi_cols, offset) = (self.f.mi_cols, self.mi_row * self.f.mi_cols + self.mi_col);
+        // SAFETY: the block's cells are inside the frame, which the maps are
+        // the size of.
+        (0..y_mis).flat_map(move |y| (0..x_mis).map(move |x| unsafe { at.add(offset + y * mi_cols + x) }))
+    }
+
+    /// Writes the block's segment into this frame's map.
+    fn set_segment_id(&mut self, x_mis: usize, y_mis: usize, segment_id: u8) {
+        for cell in self.segment_cells(self.f.seg_cur, x_mis, y_mis) {
+            // SAFETY: inside the map, and in this tile's columns.
+            unsafe { *cell.cast_mut() = segment_id };
+        }
+    }
+
+    /// Carries the block's cells of the last map into this frame's.
+    fn copy_segment_id(&mut self, x_mis: usize, y_mis: usize) {
+        let (last, cur) = (self.f.seg_last, self.f.seg_cur);
+        for (from, to) in self.segment_cells(last, x_mis, y_mis).zip(self.segment_cells(cur, x_mis, y_mis)) {
+            // SAFETY: inside the maps, and in this tile's columns.
+            unsafe { *to.cast_mut() = *from };
+        }
+    }
+
+    /// The segment the last map gives the block: the lowest of its cells'.
+    fn predicted_segment_id(&self, x_mis: usize, y_mis: usize) -> u8 {
+        // SAFETY: inside the map.
+        self.segment_cells(self.f.seg_last, x_mis, y_mis).map(|cell| unsafe { *cell }).min().unwrap_or(0)
+    }
+
+    /// A block's segment in a frame of only intra blocks, as
+    /// `read_intra_segment_id`: coded, or 0 while the map is carried.
+    fn intra_segment_id(&mut self, x_mis: usize, y_mis: usize) -> u8 {
+        let seg = self.f.seg;
+        if !seg.enabled {
+            return 0;
+        }
+        if !seg.update_map {
+            self.copy_segment_id(x_mis, y_mis);
+            return 0;
+        }
+        let segment_id = self.read_segment_id();
+        self.set_segment_id(x_mis, y_mis, segment_id);
+        segment_id
+    }
+
+    /// A block's segment in an inter frame, as `read_inter_segment_id`: the
+    /// last map's where the map is carried, or where the block says it is
+    /// the last map's, and coded otherwise.
+    fn inter_segment_id(&mut self, mi: &mut ModeInfo, x_mis: usize, y_mis: usize) {
+        let seg = self.f.seg;
+        if !seg.enabled {
+            return;
+        }
+        let predicted = self.predicted_segment_id(x_mis, y_mis);
+        if !seg.update_map {
+            self.copy_segment_id(x_mis, y_mis);
+            mi.segment_id = predicted;
+            return;
+        }
+        let segment_id = if seg.temporal_update {
+            let ctx = (self.have_above && self.above.seg_id_predicted) as usize + (self.have_left && self.left.seg_id_predicted) as usize;
+            mi.seg_id_predicted = self.r.read(seg.pred_probs[ctx]);
+            if mi.seg_id_predicted { predicted } else { self.read_segment_id() }
+        } else {
+            self.read_segment_id()
+        };
+        self.set_segment_id(x_mis, y_mis, segment_id);
+        mi.segment_id = segment_id;
+    }
+
+    /// Whether the block has no residual: its segment's say, or coded.
+    fn skip_flag(&mut self, segment_id: u8) -> bool {
+        if self.f.seg.feature(segment_id, SEG_LVL_SKIP).is_some() {
+            return true;
+        }
         let ctx = (self.have_above && self.above.skip) as usize + (self.have_left && self.left.skip) as usize;
         let skip = self.r.read(self.f.probs.skip[ctx]);
         self.counts.skip[ctx][skip as usize] += 1;
@@ -444,7 +539,7 @@ impl<'a> Tile<'a> {
     /// The modes of a block of a frame that has only intra blocks, each coded
     /// against the modes above and to the left of it.
     fn intra_frame_mode_info(&mut self, mi: &mut ModeInfo) {
-        mi.skip = self.skip_flag();
+        mi.skip = self.skip_flag(mi.segment_id);
         mi.tx_size = self.tx_size(mi.sb_type, true);
         mi.ref_frame = INTRA_FRAME;
         mi.interp_filter = 3;
@@ -488,18 +583,26 @@ impl<'a> Tile<'a> {
     }
 
     fn inter_frame_mode_info(&mut self, mi: &mut ModeInfo) -> Result<()> {
-        mi.skip = self.skip_flag();
-        let ctx = match (self.have_above, self.have_left) {
-            (true, true) => {
-                let (a, l) = (!self.above.is_inter(), !self.left.is_inter());
-                if a && l { 3 } else { (a || l) as usize }
+        mi.skip = self.skip_flag(mi.segment_id);
+        // Whether the block is predicted from a reference: its segment's say,
+        // or coded.
+        let inter = match self.f.seg.feature(mi.segment_id, SEG_LVL_REF_FRAME) {
+            Some(reference) => reference != INTRA_FRAME as i16,
+            None => {
+                let ctx = match (self.have_above, self.have_left) {
+                    (true, true) => {
+                        let (a, l) = (!self.above.is_inter(), !self.left.is_inter());
+                        if a && l { 3 } else { (a || l) as usize }
+                    }
+                    (true, false) => 2 * !self.above.is_inter() as usize,
+                    (false, true) => 2 * !self.left.is_inter() as usize,
+                    (false, false) => 0,
+                };
+                let inter = self.r.read(self.f.probs.intra_inter[ctx]);
+                self.counts.intra_inter[ctx][inter as usize] += 1;
+                inter
             }
-            (true, false) => 2 * !self.above.is_inter() as usize,
-            (false, true) => 2 * !self.left.is_inter() as usize,
-            (false, false) => 0,
         };
-        let inter = self.r.read(self.f.probs.intra_inter[ctx]);
-        self.counts.intra_inter[ctx][inter as usize] += 1;
         mi.tx_size = self.tx_size(mi.sb_type, !mi.skip || !inter);
         if inter {
             return self.inter_block_mode_info(mi);
@@ -730,7 +833,10 @@ impl<'a> Tile<'a> {
     fn inter_block_mode_info(&mut self, mi: &mut ModeInfo) -> Result<()> {
         let bsize = mi.sb_type;
         let allow_hp = self.f.h.allow_hp;
-        mi.ref_frame = self.ref_frame();
+        mi.ref_frame = match self.f.seg.feature(mi.segment_id, SEG_LVL_REF_FRAME) {
+            Some(reference) => reference as u8,
+            None => self.ref_frame(),
+        };
         let search = &MV_REF_BLOCKS[bsize as usize];
         let mut counter = 0;
         for &pos in &search[..2] {
@@ -739,10 +845,17 @@ impl<'a> Tile<'a> {
             }
         }
         let mode_ctx = COUNTER_TO_CONTEXT[counter as usize] as usize;
-        if mode_ctx > 6 {
-            return Err(Error::invalid("an inter mode's context is impossible"));
-        }
-        if bsize >= BLOCK_8X8 {
+        if self.f.seg.feature(mi.segment_id, SEG_LVL_SKIP).is_some() {
+            // A skipped segment's block is the reference's samples at its
+            // own place, and is 8×8 at least: libvpx refuses a smaller one.
+            if bsize < BLOCK_8X8 {
+                return Err(Error::invalid("a block under 8×8 in a segment that skips"));
+            }
+            mi.mode = ZEROMV;
+        } else if bsize >= BLOCK_8X8 {
+            if mode_ctx > 6 {
+                return Err(Error::invalid("an inter mode's context is impossible"));
+            }
             mi.mode = self.inter_mode(mode_ctx);
         }
 
@@ -779,6 +892,9 @@ impl<'a> Tile<'a> {
             return Ok(());
         }
 
+        if mode_ctx > 6 {
+            return Err(Error::invalid("an inter mode's context is impossible"));
+        }
         let (num_w, num_h) = (1usize << self.sub_wl, 1usize << self.sub_hl);
         let mut best_new = None;
         let mut mode = ZEROMV;
@@ -885,7 +1001,7 @@ impl<'a> Tile<'a> {
                             let mut w = win;
                             let counts = (&mut self.counts.coef[tx][ty][inter as usize], &mut self.counts.eob_branch[tx][ty][inter as usize]);
                             let written;
-                            (eob, written) = decode_coefs::<COUNT, TX>(&mut w, src, probs, counts, coeffs.add(at + 2), &mut self.token_cache, f.dequant[ty], ctx, SCANS[tx][tx_type]);
+                            (eob, written) = decode_coefs::<COUNT, TX>(&mut w, src, probs, counts, coeffs.add(at + 2), &mut self.token_cache, f.dequant[mi.segment_id as usize & 7][ty], ctx, SCANS[tx][tx_type]);
                             win = w;
                             // The record's place and count, before its
                             // coefficients.

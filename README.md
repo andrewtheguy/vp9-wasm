@@ -59,7 +59,12 @@ superframe, two decoders side by side, and garbage.
 
 A run needs no ffmpeg. `bun run fixtures` regenerates the streams and their
 reference with the host's ffmpeg and libvpx from the specs in
-`test/fixtures.ts`; commit what it writes.
+`test/fixtures.ts`; commit what it writes. The two `active-map` streams are
+written by `test/screen-vp9`, a program over the `screen-vp9` crate that codes
+a picture as the remotex gateway does, told where it changed: ffmpeg has no
+way to ask libvpx for its active map. `bun run fixtures NAME...` writes the
+streams named and keeps the rest, for a host whose ffmpeg is not the one they
+were coded by; the reference decode is the same from any.
 
 The decoder must return an error on any input and never trap, since a trap
 takes the module down for every decoder in it. `rust/vp9/fuzz` holds a
@@ -98,9 +103,14 @@ and checksum.
 it: profile 1, 4:4:4 at 8 bits, every frame the size of the frames it refers
 to, each block predicted from one reference. Any other stream is refused by
 name: 4:2:0 or 4:2:2 chroma, more bits a sample, a reference of another size,
-compound prediction, segmentation, a frame shown again. Its arithmetic and its
-tables were transcribed from libvpx 1.16.0 (BSD-3-Clause, `rust/vp9/LICENSE`
-and `PATENTS`).
+compound prediction, a frame shown again. Segmentation is decoded, all four
+features: it is how libvpx codes a frame told where the picture changed,
+which `screen-vp9` asks of it for every frame the gateway or wlshare knows
+the damage of. The blocks outside the change are a segment that skips and is
+not loop filtered, each the reference's samples at its own place, so such a
+frame costs the decoder its changed blocks and the parse. Its arithmetic and
+its tables were transcribed from libvpx 1.16.0 (BSD-3-Clause,
+`rust/vp9/LICENSE` and `PATENTS`).
 
 - `rust/vp9` is the decoder: one frame in, its picture out as three planes of
   bytes, with the size to show and the colour the stream states. A frame goes

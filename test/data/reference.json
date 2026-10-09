@@ -221,6 +221,48 @@
         "4eb76e948dc69ca6319e38d7bbf8f861"
       ]
     },
+    "active-map-330x194": {
+      "sha256": "e37dab0f2af5ef211a3e46a5d64727d62e1ef29849e149b8e633ad4d35dae7e7",
+      "width": 330,
+      "height": 194,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "a41386fa096153622d89bbf4ffcaa78c",
+        "add1924b45357020ece9a49a518f3d90",
+        "f9a516beb9f40222942e4c339c767eb7",
+        "89e00dacf5291a776d1885f294e7961b",
+        "d972bedbfc4f711683679e7677e977a2",
+        "7fc609c0496bb547db906ef66cc87580",
+        "b7666fe7a06d33d56ae7f514249961af",
+        "ae808a1019db4b264a77247af9908fde",
+        "575a9e5a6f410180ded4dd4e23d2c79b",
+        "42da478abb1f1de855ba41e5d52974a1",
+        "55966f6cf79ec1dd374916ef2de3f987",
+        "5eeceee2c751f8434497f5a24acb1af3",
+        "f707f2cc168d94598ea01c0c542fa8a7"
+      ]
+    },
+    "active-map-2048x66": {
+      "sha256": "a99903bb1209dceed451f089a07bb2e2240baf59adeaf16af4a40caf5b6afbac",
+      "width": 2048,
+      "height": 66,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "923af90c6e5804433232c2051fde5846",
+        "5e657bb6f3a287569c298f60ef9a94f8",
+        "8fd91bb17939f0c5d694cb1692a3e7af",
+        "672bdf4dbc75383bc148991d906986aa",
+        "d86cf7c89a8db437a1a11375dd41c23b",
+        "a7e610d001efcee633d032bf2334d29a",
+        "553e735eefe92f22333e758b6f84ef03",
+        "f78f723747619e6814486c00db6963e7",
+        "0b0e694b7fd1beb324063426dab1bebe",
+        "ad9925f1da60638ecabccb97b8d1e3d7",
+        "0a7cc9f2c3ec0f363ae0c052b4d98d4d",
+        "dc3053c293c6bfe5b49778aae82df6cb",
+        "0fb6a83490fbac9b9e69d2c6b9b186a4"
+      ]
+    },
     "yuv420p-330x194": {
       "sha256": "f58bf1135c5539767f46255d19971c638d4b35b7fe783959f6089f5a13970d41",
       "width": 330,
