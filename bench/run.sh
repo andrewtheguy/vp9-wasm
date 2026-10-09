@@ -13,8 +13,9 @@ rounds=${ROUNDS:-3}
 # FRAMES=all, the default, is no limit: neither decoder is then given a count.
 limit=() fflimit=()
 [ "${FRAMES:-all}" = all ] || { limit=("$FRAMES") fflimit=(-frames:v "$FRAMES"); }
-dir=$(bench/samples.sh)
-samples=${SAMPLES:-$(cd "$dir" && ls *.ivf | sed 's/\.ivf$//')}
+# The default is five of the artifacts drive's bench folder, which has a quiet and a busy sample of every size captured.
+samples=${SAMPLES:-quiet-1440x900-2col-lf busy-1280x800-1col-lf busy-1920x1080-2col-lf busy-2560x1600-4col-nolf busy-3840x2160-4col-nolf}
+dir=$(bench/samples.sh $samples)
 
 # Waits, up to ten minutes, for the 1-minute load to fall under 1.5, so no run is timed against a build or the last run.
 quiet() {

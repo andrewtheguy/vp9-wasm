@@ -254,7 +254,8 @@ five samples of 120 frames, cut from those captures as `screen-vp9` 0.0.10
 codes each size, one from a quiet stretch and four from the busiest, of one
 tile column, two and four. `bench/samples.sh` copies them once from the
 `bench` folder of the artifacts drive to `tmp/bench`, and no run reads the
-drive. The script does what a busy host needs: it pins the builds to the same
+drive. That folder has a quiet and a busy sample of every size captured, and
+`SAMPLES` names others to decode instead. The script does what a busy host needs: it pins the builds to the same
 cores (`taskset`), alternates them round by round, waits for the load to fall
 before each stream, and prints `perf stat -e instructions:u,cycles:u` beside
 the times, with the medians of three rounds.
