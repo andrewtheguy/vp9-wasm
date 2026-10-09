@@ -157,10 +157,12 @@ five and a virtual Mac at three, at quality 90 with the loop filter on
 every frame, each capture whole. It ran on a six-core x86 workstation, the
 builds alternately on the same cores, one for one thread and four for four,
 once the host was quiet, each once. The cycle counts are `perf stat`'s for
-the whole process and do not depend on the load. Release 0.0.3 and release
-0.0.5 of the module under Bun, per frame:
+the whole process and do not depend on the load.
 
-| Capture | Threads | M instructions | M cycles | Mean ms |
+The module against its own earlier release, both under Bun. Each cell is
+release 0.0.3 → release 0.0.5, per frame, and lower is better:
+
+| Capture | Threads | M instructions, 0.0.3 → 0.0.5 | M cycles, 0.0.3 → 0.0.5 | Mean ms, 0.0.3 → 0.0.5 |
 |---|---|---|---|---|
 | Windows, 1280×800, 1898 frames | 1 | 134.5 → 129.4 | 69.0 → 66.0 | 21.4 → 20.5 |
 | | 4 | 134.9 → 129.9 | 72.4 → 68.9 | 16.0 → 15.7 |
@@ -179,7 +181,8 @@ the whole process and do not depend on the load. Release 0.0.3 and release
 | a Mac, 3840×2160, 1443 frames | 1 | 450.7 → 435.3 | 234.5 → 220.3 | 73.1 → 68.6 |
 | | 4 | 451.6 → 436.3 | 249.4 → 234.2 | 28.4 → 27.8 |
 
-Against libvpx, as release 0.0.5 in the same runs and ffmpeg 7.1's
+The module against libvpx, per frame, lower better: release 0.0.5 in the
+same runs and ffmpeg 7.1's
 `libvpx-vp9` decoder (libvpx 1.15.0) alternated with it; the cycles are each
 whole process's, the module's ms its own clock's mean over the frames and
 libvpx's its process's wall time over them. The command is
