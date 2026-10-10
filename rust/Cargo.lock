@@ -55,14 +55,14 @@ dependencies = [
 
 [[package]]
 name = "vp9"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "rayon",
 ]
 
 [[package]]
 name = "vp9-bench"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "rayon",
  "vp9",
