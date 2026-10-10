@@ -72,6 +72,11 @@ pub struct Plane {
     pub stride: usize,
 }
 
+/// How many frames back a frame's chain of LAST references is kept: past
+/// libvpx's golden-frame interval, since the buffer a frame is given is
+/// the one the golden slot let go of as often as the one two frames back.
+pub(crate) const CHAIN: usize = 64;
+
 pub struct Frame {
     /// The size to show.
     pub width: usize,
@@ -81,12 +86,30 @@ pub struct Frame {
     pub(crate) mi: Vec<ModeInfo>,
     pub(crate) mi_cols: usize,
     pub(crate) mi_rows: usize,
+    /// The frame's number in its decoder's count, from 1; 0 while no frame
+    /// has been decoded into the buffers.
+    pub(crate) serial: u64,
+    /// This frame's serial, then its LAST reference's, and so on back as
+    /// far as `CHAIN` of them, with zeros after: the frames its still blocks
+    /// are the samples of.
+    pub(crate) chain: [u64; CHAIN],
+    /// Per 64×64 block, the serial of the newest frame in the chain that
+    /// wrote any of its samples: the frames of the chain before that one
+    /// hold the same samples there, and a buffer still holding one of them
+    /// need not be copied into (`Recon::start_row`).
+    pub(crate) kept: Vec<u64>,
 }
 
 impl Frame {
     /// The bytes a frame of this size takes: its planes and its blocks' modes.
     pub(crate) fn bytes(width: usize, height: usize) -> usize {
         3 * width.next_multiple_of(64) * height.next_multiple_of(64) + width.div_ceil(8) * height.div_ceil(8) * size_of::<ModeInfo>()
+    }
+
+    /// What each 8×8 of the frame was coded as, in raster order, and how
+    /// many there are to a row.
+    pub fn blocks(&self) -> (&[ModeInfo], usize) {
+        (&self.mi, self.mi_cols)
     }
 
     /// A frame of zeros, or an error where the memory has no room for it.
@@ -109,6 +132,9 @@ impl Frame {
             mi: zeroed(mi_cols * mi_rows, ModeInfo::default())?,
             mi_cols,
             mi_rows,
+            serial: 0,
+            chain: [0; CHAIN],
+            kept: zeroed(mi_cols.div_ceil(8) * mi_rows.div_ceil(8), 0)?,
         }))()
         .ok_or_else(|| Error::unsupported(format!("a {width}x{height} frame, which the memory has no room for")))
     }

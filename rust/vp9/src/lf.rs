@@ -63,12 +63,13 @@ impl LoopFilter {
 
     /// Filters the 64×64 block at (`mi_row`, `mi_col`) in 8×8 units: its
     /// vertical edges, then its horizontal ones, which reach eight samples
-    /// into the blocks to its left and above it.
+    /// into the blocks to its left and above it. Returns whether any of its
+    /// blocks has a filter level at all: when none does, nothing is written.
     ///
     /// # Safety
     /// No other thread may be filtering this block, the one to its left, or
     /// the three above it and above to either side.
-    pub unsafe fn filter_sb(&self, f: &Filtered, mi_row: usize, mi_col: usize) {
+    pub unsafe fn filter_sb(&self, f: &Filtered, mi_row: usize, mi_col: usize) -> bool {
         let mut mask_16x16 = [0u32; 8];
         let mut mask_8x8 = [0u32; 8];
         let mut mask_4x4 = [0u32; 8];
@@ -131,7 +132,7 @@ impl LoopFilter {
             }
         }
         if !any {
-            return;
+            return false;
         }
 
         // The frame's left edge is not filtered, nor its top one.
@@ -191,5 +192,6 @@ impl LoopFilter {
                 }
             }
         }
+        true
     }
 }

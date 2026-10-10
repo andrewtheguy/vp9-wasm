@@ -3,6 +3,12 @@
 //! against libvpx; the timing goes to stderr.
 //!
 //!   vp9-bench FILE [THREADS] [REPEATS]
+//!
+//! With VP9_STATS set, each frame also gets a line on stderr of what its blocks
+//! were coded as: the share of its 8×8s that are the last frame's samples in
+//! place (`still`), in libvpx's inactive segment, intra, and not skipped (their
+//! residual is coded, though each transform block of it may hold no
+//! coefficient), and how many of its 64×64 blocks hold anything but still ones.
 
 mod md5;
 
@@ -28,6 +34,7 @@ fn main() {
     let threads: usize = args.next().map_or(1, |s| s.parse().expect("THREADS"));
     let repeats: usize = args.next().map_or(1, |s| s.parse().expect("REPEATS"));
     let data = std::fs::read(&path).expect("read input");
+    let stats = std::env::var_os("VP9_STATS").is_some();
     let units = ivf_frames(&data);
     if units.is_empty() {
         eprintln!("{path}: no frames");
@@ -59,6 +66,36 @@ fn main() {
                             }
                         }
                         println!("{}", m.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>());
+                        if stats {
+                            let (mi, cols) = f.blocks();
+                            let rows = mi.len() / cols;
+                            let (mut still, mut inactive, mut intra, mut unskipped) = (0, 0, 0, 0);
+                            for m in mi {
+                                still += m.still() as usize;
+                                inactive += (m.segment_id == 7) as usize;
+                                intra += !m.is_inter() as usize;
+                                unskipped += !m.skip as usize;
+                            }
+                            let (sb_cols, sb_rows) = (cols.div_ceil(8), rows.div_ceil(8));
+                            let touched = (0..sb_rows * sb_cols)
+                                .filter(|&s| {
+                                    let (r0, c0) = (s / sb_cols * 8, s % sb_cols * 8);
+                                    (r0..(r0 + 8).min(rows)).any(|r| (c0..(c0 + 8).min(cols)).any(|c| !mi[r * cols + c].still()))
+                                })
+                                .count();
+                            let pct = |n: usize| 100.0 * n as f64 / mi.len() as f64;
+                            eprintln!(
+                                "frame {}: {} bytes{}, still {:.1}%, inactive {:.1}%, intra {:.1}%, not skipped {:.1}%, 64x64 blocks touched {touched}/{}",
+                                times.len() - 1,
+                                unit.len(),
+                                if d.keyframe { ", keyframe" } else { "" },
+                                pct(still),
+                                pct(inactive),
+                                pct(intra),
+                                pct(unskipped),
+                                sb_rows * sb_cols
+                            );
+                        }
                         // VP9_DUMP=path:index writes frame `index` as raw planar 4:4:4.
                         if let Some((path, idx)) = std::env::var("VP9_DUMP").ok().and_then(|v| v.split_once(':').map(|(p, i)| (p.to_string(), i.parse::<usize>().unwrap_or(0))))
                             && idx + 1 == n

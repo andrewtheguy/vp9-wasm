@@ -13,6 +13,8 @@ gateway's own: a wlshare desktop, a Mac at 1440×900, a shader animation and
 a Mac screen recording, called the desktop, the Mac, the shader and the
 recording. The later ones are from what the remotex gateway wrote on
 2026-10-08 and the 120-frame samples of `bench/samples.sh` cut from it.
+The latest, on the buffers held, are from wlshare's captures of 2026-10-09
+and the samples cut from those as `screen-vp9` 0.0.12 codes them.
 
 ## Where the time goes
 
@@ -244,3 +246,55 @@ are the same text in a terminal at two samples to the pixel and pay 1%, as
 a browser on Windows does. So a column costs about 1% at 1920 wide as it
 does above, except on that terminal, where the two columns `screen-vp9`
 codes from 1440 wide already cost 12%.
+
+## The buffers held, on what `screen-vp9` 0.0.12 codes
+
+The samples of 2026-10-09 are cut by wlshare's `scripts/vp9-samples.sh`
+from its captures of what a session handed its encoder, ten sizes from
+1280×800 to 3840×2160, the six from 2048 wide at two pixels to the point,
+coded again by `screen-vp9` 0.0.12 on four threads: told where the picture
+changed, which libvpx takes as its active map, in four tile columns without
+the loop filter from 2048 wide. The quiet sample of a size is the start of a
+terminal session at it, the busy one the 120 frames in a row of a flood of
+coloured text whose frames said the most pixels changed. A quiet inter frame
+is 550 bytes at 1440×900 and 1.4 KB at 4K; 99.9% of its 8×8s are in the
+inactive segment, so still, and it touches one or two of its 345 64×64
+blocks at 1440×900, three or four of 2,040 at 4K. The samples and their
+libvpx MD5s are `dist/vp9-bench` in the wlshare repository, with a README of
+which frames of which capture each is.
+
+Profiled as the module under Node on one thread, a quiet 4K frame was 60%
+the row copy, libc's `memcpy` behind `memory.copy`, and 17% `Tile::block`,
+most of that the mode grid filled over the inactive blocks. The copy is now
+made only where the buffer does not hold the samples already (the README):
+120 frames of the quiet 4K sample copied 82 MB where the whole rows were
+3.0 GB, and 328 MB when a frame's chain of references was kept eight deep,
+since the buffer a frame is given is as often the one the golden slot let
+go of, ten frames old, as the one from two frames back. One thread, 120
+frames, the medians of three rounds; libvpx's milliseconds are its mean, the
+one number ffmpeg gives:
+
+| | M cycles a frame | | | median ms a frame | | |
+|---|---|---|---|---|---|---|
+| | before | after | libvpx | before | after | libvpx |
+| quiet 1440×900, two columns, filtered | 9.6 | 7.5 | 5.3 | 1.29 | 0.77 | 1.36 |
+| quiet 1920×1080, two, filtered | 13.4 | 9.2 | 7.6 | 2.83 | 0.70 | 2.17 |
+| quiet 2560×1600, four, unfiltered | 15.4 | 9.5 | 12.5 | 2.48 | 0.59 | 3.97 |
+| quiet 3840×2160, four, unfiltered | 22.7 | 12.7 | 24.8 | 4.78 | 1.08 | 8.31 |
+| busy 1280×800, one, filtered | 268 | 268 | 256 | 84.4 | 84.0 | 79.2 |
+| busy 1920×1080, two, filtered | 555 | 555 | 542 | 173.9 | 173.7 | 169.2 |
+| busy 2560×1600, four, unfiltered | 678 | 679 | 679 | 211.7 | 210.5 | 212.5 |
+| busy 3840×2160, four, unfiltered | 1415 | 1410 | 1412 | 466 | 454 | 455 |
+
+A busy frame writes every block and is as it was, the stamps costing nothing
+that shows; and the module is within a fortieth of libvpx's cycles on the
+three largest, a twentieth on the smallest, those frames being token parsing. A quiet frame's mean is
+well above its median, 4.7 ms for 1.1 at 4K, for the keyframe and the first
+frames after it, each buffer of the pool copied whole the first time it is
+given a frame. On four threads the quiet frames go from 2.4 ms to 1.4 at
+1440×900, 2.9 to 1.7 at 1920×1080, 2.9 to 2.2 at 2560×1600 and 4.5 to 3.5
+at 3840×2160, libvpx taking 1.9, 2.7, 2.6 and 4.6; the four-thread frame
+is now mostly the pool's hand-off and the parse of one tile column. What
+is left of a quiet frame on one thread is `Tile::block`, half of it the
+34-byte `ModeInfo` written to the 64 cells of each inactive 64×64 block
+([remaining.md](remaining.md)).

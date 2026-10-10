@@ -7,6 +7,7 @@ use crate::frame::*;
 use crate::intra::Pred;
 use crate::tile::{FrameCtx, RowBuf, INTRA_TX_TYPE};
 use crate::{convolve, intra, itx};
+use std::sync::atomic::Ordering;
 
 const NEED_LEFT: u8 = 2;
 const NEED_ABOVE: u8 = 4;
@@ -43,12 +44,16 @@ impl<'a> Recon<'a> {
     }
 
     /// The row of 64×64 blocks `sb_row` of an inter frame starts as the LAST
-    /// reference's rows, one copy of the contiguous bytes, so that a still
-    /// block from it (`ModeInfo::still`) is in place already. Past the frame's
-    /// right and bottom edges, as far as the last 8×8, the samples are the
-    /// edge's repeated, which is what a block that crosses an edge is
-    /// predicted from (`predict_inter_block`) and what the blocks after it
-    /// and the loop filter read there.
+    /// reference's rows, so that a still block from it (`ModeInfo::still`) is
+    /// in place already: one copy of the contiguous bytes, but for the blocks
+    /// the buffer holds those samples at already (`FrameCtx::held`), which
+    /// are left as they are, a screen's quiet frame being nearly all of them.
+    /// Past the frame's right and bottom edges, as far as the last 8×8, the
+    /// samples are the edge's repeated, which is what a block that crosses
+    /// an edge is predicted from (`predict_inter_block`) and what the blocks
+    /// after it and the loop filter read there; those are written whether
+    /// the block was copied or held, since a held block's are the edge of
+    /// some frame before.
     ///
     /// # Safety
     /// Nothing has written the row yet, and no other thread touches it.
@@ -59,15 +64,38 @@ impl<'a> Recon<'a> {
         let y0 = sb_row * 64;
         // The row has an 8×8 inside the frame, so it starts above the edge.
         let y1 = (y0 + 64).min(h);
+        let held = &f.held[sb_row * f.sb_cols..(sb_row + 1) * f.sb_cols];
         for plane in 0..3 {
             let (src, dst) = (f.refs[0][plane], f.cur[plane]);
             // SAFETY: the planes are whole rows of 64×64 blocks, and the
             // reference is of the frame's size.
             unsafe {
-                std::ptr::copy_nonoverlapping(src.add(y0 * stride), dst.add(y0 * stride), (y1 - y0) * stride);
-                for y in y0..y1 {
-                    let line = dst.add(y * stride);
-                    std::ptr::write_bytes(line.add(w), *line.add(w - 1), cols - w);
+                // Each run of blocks not held, in one copy where it is the
+                // whole row and line by line otherwise.
+                let mut c = 0;
+                while c < f.sb_cols {
+                    if held[c] {
+                        c += 1;
+                        continue;
+                    }
+                    let from = c;
+                    while c < f.sb_cols && !held[c] {
+                        c += 1;
+                    }
+                    let (x, len) = (from * 64, (c - from) * 64);
+                    if len == stride {
+                        std::ptr::copy_nonoverlapping(src.add(y0 * stride), dst.add(y0 * stride), (y1 - y0) * stride);
+                    } else {
+                        for y in y0..y1 {
+                            std::ptr::copy_nonoverlapping(src.add(y * stride + x), dst.add(y * stride + x), len);
+                        }
+                    }
+                }
+                if w < cols {
+                    for y in y0..y1 {
+                        let line = dst.add(y * stride);
+                        std::ptr::write_bytes(line.add(w), *line.add(w - 1), cols - w);
+                    }
                 }
                 for y in h..(y0 + 64).min(rows) {
                     std::ptr::copy_nonoverlapping(dst.add((h - 1) * stride), dst.add(y * stride), cols);
@@ -135,6 +163,7 @@ impl<'a> Recon<'a> {
             return;
         }
         let f = self.f;
+        f.changed[(mi_row >> 3) * f.sb_cols + (mi_col >> 3)].store(true, Ordering::Relaxed);
         let bsize = mi.sb_type;
         let (bw, bh) = (NUM_8X8_WIDE[bsize as usize] as usize, NUM_8X8_HIGH[bsize as usize] as usize);
         let (n4_w, n4_h) = (bw * 2, bh * 2);

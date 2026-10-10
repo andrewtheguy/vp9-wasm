@@ -9,7 +9,7 @@ members = ["vp9", "vp9-bench"]
 exclude = ["vp9-web"]
 
 [workspace.package]
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 license = "BSD-3-Clause"
 rust-version = "1.85"
