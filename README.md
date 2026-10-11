@@ -288,7 +288,13 @@ where the picture changed. `bench/samples.sh` copies them once from the
 `SAMPLES` names others to decode instead. The script does what a busy host needs: it pins the builds to the same
 cores (`taskset`), alternates them round by round, waits for the load to fall
 before each stream, and prints `perf stat -e instructions:u,cycles:u` beside
-the times, with the medians of three rounds.
+the times, with the medians of three rounds. On a Mac, where the module is
+what Safari on macOS and iOS runs, it runs the same way unpinned, since macOS
+holds no process to a core, and prints the counts `/usr/bin/time -l` gives,
+user and kernel together; its quiet load is 3, where an idle Mac sits near 2
+(`QUIET` sets it). JavaScriptCore is Bun's engine as it is Safari's, and on
+Apple silicon it lowers SIMD128 to NEON, so a change can rank otherwise there
+than on x86: a Mac's numbers are compared with a Mac's.
 
 ## Requirements
 
