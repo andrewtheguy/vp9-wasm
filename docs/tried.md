@@ -71,6 +71,34 @@ alone, which cut 1% of the instructions and no cycles; the large tokens
 apart alone, which cost a call per such token and 1% of the cycles; the two
 together gain 1% to 2% and are kept.
 
+On a Mac under Bun, JavaScriptCore on Apple silicon, the boolean
+decoder's window handed to `large_token` and back by value rather than by
+reference, so that its address does not leave `decode_coefs` and the loop
+stops storing it to the shadow stack at every boolean: half the function's
+stores in the wasm, and 3% more instructions and 3% to 4% more cycles a
+frame on the busy 1280×800 and 1920×1080 samples, `decode_coefs` 4.5% and
+`large_token` 10% more of the profile. The stores were off the boolean's
+chain, and an M2 overlaps them. On the same samples, the builds compared
+with a copy of themselves first, which came out within 0.2%:
+
+- **A token's probabilities by two offsets**, a table of the bands times 18
+  and one of the contexts times 3 by the sum of the two neighbours: the same
+  instructions and cycles to the tenth. JavaScriptCore's arm64 code
+  materializes the multipliers' constants in the loop, and what they cost is
+  off the boolean's chain.
+- **The split as `((range - 1) * prob >> 8) + 1`**, which needs no 256 in a
+  register: 4% more cycles. LLVM already makes libvpx's sum
+  `(range - 1) * prob + 256`, which JavaScriptCore lowers to a subtraction
+  and a multiply-add; the add after the shift is one more step on the chain.
+- **`256 - prob` from a table**, so that the sum stays libvpx's
+  `range * prob + (256 - prob)` and the subtraction leaves the chain: 4.5%
+  more instructions and 4.6% more cycles, the load and its address added and
+  the multiply not fused with the add.
+
+Each step on the chain from one boolean's range to the next costs about 4%
+of a busy frame on an M2: the loop waits on it, and what is beside it is
+free.
+
 A path for the transform block with no coefficients, which most are, was
 measured in two forms (`tmp/logs/tokens-empty-path.patch` holds both). `tokens` costs about 45 cycles per transform block on the
 Mac capture, 7.5% of its frame, and between two blocks runs a chain from one

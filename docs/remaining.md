@@ -47,9 +47,16 @@ nothing below is large. In the order the work would go:
 
 ## Not measured
 
-- **Apple silicon.** Every number is from an x86 workstation. V8 lowers
-  SIMD128 to NEON differently there and the memory system differs, so the
-  parts of a frame may rank differently.
+- **Apple silicon, on an iPhone or iPad.** On an M2 under Bun, whose
+  JavaScriptCore is Safari's, a busy frame is three quarters token parsing,
+  waiting on the boolean's chain, and the module takes 1% to 4% fewer cycles
+  than libvpx's NEON build on one thread (`bench/run.sh`, and what was tried
+  there in [tried.md](tried.md)). The memory is fast memory, a load being one
+  instruction with no bounds check; the shuffles are each one NEON
+  instruction, `zip`, `uzp`, `dup` or `ext` for seven in ten and `tbl` for the
+  rest; nothing uses `bitmask`. Not measured: iOS, whose Safari may give a
+  shared memory bounds checks, and its two performance cores beside four
+  efficiency ones, onto which the thread that parses may be put.
 - **Eight threads.** remotex starts a pool of up to eight. Six on six cores
   gain a tenth on one busy sample and lose on the rest; eight on eight have
   not been run.
