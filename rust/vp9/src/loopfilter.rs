@@ -6,16 +6,24 @@
 //! `pitch` is the stride: a horizontal edge has its samples `pitch` apart across
 //! it, a vertical one has them 1 apart.
 //!
+//! The `_dual` functions filter two edges of 8 at once, each with its own
+//! thresholds: the second is the 8 samples after the first along a horizontal
+//! edge, or the 8 rows below it along a vertical one.
+//!
 //! The plain kernels in `scalar` are the reference, and what every target runs
 //! but WebAssembly with SIMD, which runs the same arithmetic from `simd128`.
+//!
+//! Each function is one of the module's own and is not inlined into the
+//! filter's walk: inlined, the walk is larger and the quiet terminal took 5%
+//! more cycles under Bun for the same video (docs/tried.md).
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 mod simd128;
 
 #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-use scalar::{horizontal, vertical};
+use scalar::{horizontal, horizontal_dual, vertical, vertical_dual};
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-use simd128::{horizontal, vertical};
+use simd128::{horizontal, horizontal_dual, vertical, vertical_dual};
 
 #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
 mod scalar {
@@ -152,17 +160,52 @@ mod scalar {
     pub(super) unsafe fn vertical<const TAPS: usize>(s: *mut u8, pitch: isize, blimit: u8, limit: u8, thresh: u8) {
         unsafe { edge::<TAPS>(s, 1, pitch, blimit, limit, thresh) }
     }
+
+    /// Filters two edges of 8 samples side by side along a horizontal edge.
+    pub(super) unsafe fn horizontal_dual<const TAPS: usize>(
+        s: *mut u8,
+        pitch: isize,
+        blimit0: u8,
+        limit0: u8,
+        thresh0: u8,
+        blimit1: u8,
+        limit1: u8,
+        thresh1: u8,
+    ) {
+        unsafe {
+            horizontal::<TAPS>(s, pitch, blimit0, limit0, thresh0);
+            horizontal::<TAPS>(s.add(8), pitch, blimit1, limit1, thresh1);
+        }
+    }
+
+    /// Filters two edges of 8 rows one above the other along a vertical edge.
+    pub(super) unsafe fn vertical_dual<const TAPS: usize>(
+        s: *mut u8,
+        pitch: isize,
+        blimit0: u8,
+        limit0: u8,
+        thresh0: u8,
+        blimit1: u8,
+        limit1: u8,
+        thresh1: u8,
+    ) {
+        unsafe {
+            vertical::<TAPS>(s, pitch, blimit0, limit0, thresh0);
+            vertical::<TAPS>(s.offset(8 * pitch), pitch, blimit1, limit1, thresh1);
+        }
+    }
 }
 
-/// The narrow and the 8-sample filters.
+/// The narrow and the 8-sample filters, of one edge and of two.
 macro_rules! lpf {
-    ($taps:literal, $h:ident, $v:ident) => {
+    ($taps:literal, $h:ident, $v:ident, $h2:ident, $v2:ident) => {
         /// Filters 8 samples along a horizontal edge.
         ///
         /// # Safety
         ///
         /// Columns `s[0..8]` of the 4 rows before `s` and the 4 from it on
         /// must be readable and writable.
+        #[inline(never)]
         pub unsafe fn $h(s: *mut u8, pitch: isize, blimit: u8, limit: u8, thresh: u8) {
             unsafe { horizontal::<$taps>(s, pitch, blimit, limit, thresh) }
         }
@@ -173,14 +216,39 @@ macro_rules! lpf {
         ///
         /// The 4 samples before `s` and the 4 from it on must be readable and
         /// writable in each of 8 rows.
+        #[inline(never)]
         pub unsafe fn $v(s: *mut u8, pitch: isize, blimit: u8, limit: u8, thresh: u8) {
             unsafe { vertical::<$taps>(s, pitch, blimit, limit, thresh) }
+        }
+
+        /// Filters 16 samples along a horizontal edge, the first 8 by the
+        /// first thresholds and the next by the second.
+        ///
+        /// # Safety
+        ///
+        /// Columns `s[0..16]` of the 4 rows before `s` and the 4 from it on
+        /// must be readable and writable.
+        #[inline(never)]
+        pub unsafe fn $h2(s: *mut u8, pitch: isize, blimit0: u8, limit0: u8, thresh0: u8, blimit1: u8, limit1: u8, thresh1: u8) {
+            unsafe { horizontal_dual::<$taps>(s, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1) }
+        }
+
+        /// Filters 16 rows along a vertical edge, the first 8 by the first
+        /// thresholds and the next by the second.
+        ///
+        /// # Safety
+        ///
+        /// The 4 samples before `s` and the 4 from it on must be readable and
+        /// writable in each of 16 rows.
+        #[inline(never)]
+        pub unsafe fn $v2(s: *mut u8, pitch: isize, blimit0: u8, limit0: u8, thresh0: u8, blimit1: u8, limit1: u8, thresh1: u8) {
+            unsafe { vertical_dual::<$taps>(s, pitch, blimit0, limit0, thresh0, blimit1, limit1, thresh1) }
         }
     };
 }
 
-lpf!(4, lpf_horizontal_4, lpf_vertical_4);
-lpf!(8, lpf_horizontal_8, lpf_vertical_8);
+lpf!(4, lpf_horizontal_4, lpf_vertical_4, lpf_horizontal_4_dual, lpf_vertical_4_dual);
+lpf!(8, lpf_horizontal_8, lpf_vertical_8, lpf_horizontal_8_dual, lpf_vertical_8_dual);
 
 /// Filters 8 samples along a horizontal edge with up to the 16-sample filter.
 ///
@@ -188,6 +256,7 @@ lpf!(8, lpf_horizontal_8, lpf_vertical_8);
 ///
 /// Columns `s[0..8]` of the 8 rows before `s` and the 8 from it on must be
 /// readable and writable.
+#[inline(never)]
 pub unsafe fn lpf_horizontal_16(s: *mut u8, pitch: isize, blimit: u8, limit: u8, thresh: u8) {
     unsafe { horizontal::<16>(s, pitch, blimit, limit, thresh) }
 }
@@ -198,6 +267,7 @@ pub unsafe fn lpf_horizontal_16(s: *mut u8, pitch: isize, blimit: u8, limit: u8,
 ///
 /// The 8 samples before `s` and the 8 from it on must be readable and writable
 /// in each of 8 rows.
+#[inline(never)]
 pub unsafe fn lpf_vertical_16(s: *mut u8, pitch: isize, blimit: u8, limit: u8, thresh: u8) {
     unsafe { vertical::<16>(s, pitch, blimit, limit, thresh) }
 }
