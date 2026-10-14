@@ -386,11 +386,11 @@ process and takes off a run of the first frame alone, so the frames after
 the first count that thread and the slower code that ran before it. Of a
 run of the terminal's 120 frames on one thread the compiler's thread takes
 417 M cycles, 347 M of them after the first frame, 2.9 M a frame of its
-6.2; of the 1920×1080 video's, 873 M, 6.8 M a frame of 68. With the
-optimising compiler off the terminal is 3.1 M cycles a frame, and the video
-108. Decoded once whole in the process by a decoder of its own before it is
-counted, M cycles a frame on one thread, this branch's module beside
-libvpx's of the table above:
+6.2; of the 1920×1080 video's, 873 M, 811 M of them after the first frame,
+6.8 M a frame of 68. With the optimising compiler off the terminal is 3.1 M
+cycles a frame, and the video 108. Decoded once whole in the process by a
+decoder of its own before it is counted, M cycles a frame on one thread,
+this branch's module beside libvpx's of the table above:
 
 | | as `bench/run.sh` counts | after one pass | libvpx |
 |---|---|---|---|
