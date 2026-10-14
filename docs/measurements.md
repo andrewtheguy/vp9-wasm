@@ -362,7 +362,7 @@ is mostly its first frames after the keyframe, its median a quarter of it.
 On one thread the module is a third to two thirds behind libvpx on the
 video and the walk, at every size, and two thirds behind or more on a quiet
 terminal under 2048 wide, where the loop filter is on: 3 M cycles a frame
-more, of 6. From 2048 wide, in four columns without the filter, it takes
+more, of 6, most of which is the engine still starting (below). From 2048 wide, in four columns without the filter, it takes
 half libvpx's cycles on the terminal. Four threads hide the rest: the module
 is ahead of libvpx or within a tenth everywhere but the browser at 4K, 12.9
 ms a frame for 10.4, and uncover at 1920×1080, 4.3 for 3.7, whose frames
@@ -375,9 +375,50 @@ same a frame either way, to 5% on either decoder. The second
 keyframe had seemed to cost 221 M cycles, a run of two frames less a run of
 one; but the second frame of the trimmed sample, an inter frame of 2 KB,
 costs 107 M cycles the same way, four frames of the run, and the terminal's
-53 M, nine of its frames. What a run's second frame costs is mostly the
-module still starting, whatever the frame, and every sample counts it in
-its frames.
+53 M, nine of its frames: what a run's second frame costs is mostly the
+engine still starting, whatever the frame.
+
+The engine's start is in every sample's frames. Bun's JavaScriptCore runs
+the module in an interpreter, then as its quick compiler made it, and
+compiles each function again with its optimising compiler on a thread of
+its own once the function has run enough. `bench/run.sh` counts the whole
+process and takes off a run of the first frame alone, so the frames after
+the first count that thread and the slower code that ran before it. Of a
+run of the terminal's 120 frames on one thread the compiler's thread takes
+417 M cycles, 347 M of them after the first frame, 2.9 M a frame of its
+6.2; of the 1920×1080 video's, 873 M, 6.8 M a frame of 68. With the
+optimising compiler off the terminal is 3.1 M cycles a frame, and the video
+108. Decoded once whole in the process by a decoder of its own before it is
+counted, M cycles a frame on one thread, this branch's module beside
+libvpx's of the table above:
+
+| | as `bench/run.sh` counts | after one pass | libvpx |
+|---|---|---|---|
+| terminal 1440×900 | 6.2 | 2.9 | 2.9 |
+| uncover 1920×1080 | 28.3 | 12.4 | 12.5 |
+| video 1280×800 | 44.1 | 34.4 | 26.4 |
+| video 1920×1080 | 68.4 | 58.5 | 45.3 |
+| video 3840×2160 | 140.0 | 129.6 | 107.5 |
+
+The video's second pass leaves the compiler's thread 24 M cycles, nothing to
+speak of; the terminal's 148 M, since its light frames make a function hot
+slowly, so its 2.9 still holds some. After four passes the terminal's
+decoding thread alone takes about 1.3 M cycles a frame, and the whole
+process from 1.4 to 3.1 after two to eight passes, as the compiling lands
+in one pass or another. Warm, then, the module is level with libvpx on the
+terminal and uncover and a fifth to a third behind on the video, and the
+cold gaps of the table above on the quiet samples are the engine's start.
+
+A page pays it once. remotex keeps the module's worker for the paint
+worker's life, so a stream or a resize after the first runs code already
+optimised; each function is compiled again once in the page, when it first
+runs hot, which on a desktop that turns from text to video is then. It is
+0.4 to 0.9 G cycles of the compiler's thread, a tenth to a third of a second
+of one core, and the slower code before it, in a session's first seconds.
+Not followed further, since a session past those seconds runs at the warm
+figure, and builds compared cold each pay the same start: the benchmark
+still counts cold. V8, Chrome's engine, starts otherwise and was not
+measured.
 
 A picture held while the next frame decodes, as the page holds one while it
 uploads it since 0.0.9, costs nothing: the cycles a frame are the same to

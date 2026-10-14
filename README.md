@@ -301,7 +301,10 @@ the times, with the medians of three rounds. A frame's counts and mean time
 are those of the frames after the first: each run is followed by one of the
 first frame alone, which is taken off, since the start of Bun and the
 module's compiling, or of ffmpeg, is 175 to 350 M cycles, as much as 120
-quiet frames, and ffmpeg's the larger. On a Mac, where the module is
+quiet frames, and ffmpeg's the larger. The engine goes on optimising the
+module's functions over the frames after it, which the counts keep: half a
+quiet frame's, a tenth of a video frame's at 1920×1080
+([docs/measurements.md](docs/measurements.md)). On a Mac, where the module is
 what Safari on macOS and iOS runs, it runs the same way unpinned, since macOS
 holds no process to a core, and prints the counts `/usr/bin/time -l` gives,
 user and kernel together; its quiet load is 3, where an idle Mac sits near 2
