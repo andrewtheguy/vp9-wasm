@@ -24,3 +24,4 @@ and build details belong in the [README](README.md).
 - Do not run `cargo fmt`.
 - Put temporary files and test configuration under `tmp/`. Always run local
   Python through `uv` (GitHub Actions excluded).
+- No fuzz target run unless requested.
