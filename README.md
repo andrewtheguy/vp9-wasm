@@ -160,12 +160,14 @@ its tables were transcribed from libvpx 1.16.0 (BSD-3-Clause,
   remotex's or wlshare's does.
 - `rust/vp9-web` is the page's module, in the shape of hevc-wasm's:
   wasm-bindgen, a pool whose threads are seats the page's workers take
-  (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
-  `picture`. `picture` describes the picture in the sixteen numbers hevc-wasm's
-  does: its size, the chroma layout, the colour the stream states, each
-  plane's address and stride in the module's memory, and whether it is a
-  keyframe, so the paint worker uploads the planes to WebGL from the module's
-  shared memory.
+  (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode`,
+  `picture` and `release`. `picture` describes the picture in the sixteen
+  numbers hevc-wasm's does: its size, the chroma layout, the colour the stream
+  states, each plane's address and stride in the module's memory, whether it
+  is a keyframe, and its serial, so the paint worker uploads the planes to
+  WebGL from the module's shared memory. A picture is held until the page
+  releases it by its serial, and the frames after it decode into other
+  buffers meanwhile, so the next frame decodes while the page uploads one.
 - `rust/vp9-bench` is the native harness above. To profile the module itself,
   run it under `node --perf-prof` and `perf record`: the build keeps the
   function names. Profiles and logs go under `tmp/`.

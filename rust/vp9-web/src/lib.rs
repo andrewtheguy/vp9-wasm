@@ -69,9 +69,12 @@ pub struct Decoder {
     inner: vp9::Decoder,
     /// Where the page writes the next frame.
     input: Vec<u8>,
-    /// The picture the last frame decoded to, held until the next frame so the
-    /// page can read its planes.
-    held: Option<vp9::Decoded>,
+    /// The pictures the page is reading, by serial, each held until the page
+    /// releases it: the next frames decode into other buffers meanwhile. The
+    /// last is the one the last frame decoded to.
+    held: Vec<(u32, vp9::Decoded)>,
+    /// The last picture's serial.
+    serial: u32,
     picture: [i32; PICTURE_FIELDS],
 }
 
@@ -81,15 +84,13 @@ impl Decoder {
     /// caller for one.
     #[wasm_bindgen(constructor)]
     pub fn new(threads: usize) -> Decoder {
-        Decoder { inner: vp9::Decoder::new(threads), input: Vec::new(), held: None, picture: [0; PICTURE_FIELDS] }
+        Decoder { inner: vp9::Decoder::new(threads), input: Vec::new(), held: Vec::new(), serial: 0, picture: [0; PICTURE_FIELDS] }
     }
 
     /// Room for a frame of `size` bytes in this module's memory, where the
-    /// page writes it before [`Self::decode`]. Good until that call. The
-    /// previous picture is released here. Throws for a size the memory has
-    /// no room for.
+    /// page writes it before [`Self::decode`]. Good until that call. Throws
+    /// for a size the memory has no room for.
     pub fn input(&mut self, size: usize) -> Result<*mut u8, JsError> {
-        self.held = None;
         self.input.clear();
         self.input.try_reserve_exact(size).map_err(|_| JsError::new(&format!("no room for a frame of {size} bytes")))?;
         self.input.resize(size, 0);
@@ -97,26 +98,38 @@ impl Decoder {
     }
 
     /// Decode the frame written into [`Self::input`]: true when it is one
-    /// that is shown, which [`Self::picture`] describes. Throws for a frame
-    /// that does not decode, after which the stream waits for a keyframe.
+    /// that is shown, which [`Self::picture`] describes and which is held
+    /// until [`Self::release`]. Throws for a frame that does not decode,
+    /// after which the stream waits for a keyframe.
     pub fn decode(&mut self) -> Result<bool, JsError> {
         let frame = std::mem::take(&mut self.input);
         let r = self.inner.decode(&frame);
         self.input = frame;
-        self.held = r.map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(self.held.is_some())
+        let Some(decoded) = r.map_err(|e| JsError::new(&e.to_string()))? else {
+            return Ok(false);
+        };
+        self.serial = self.serial.wrapping_add(1).max(1);
+        self.held.push((self.serial, decoded));
+        Ok(true)
+    }
+
+    /// The page is done reading picture `serial`, whose buffers the decoder
+    /// may have back. A serial not held is nothing.
+    pub fn release(&mut self, serial: u32) {
+        self.held.retain(|(s, _)| *s != serial);
     }
 
     /// The picture the last frame decoded to, in sixteen numbers, as
     /// hevc-wasm's module describes one: its width and height, `2` for 4:4:4,
     /// the colour range (`2` full, `1` limited), the matrix, primaries and
     /// transfer as ITU-T H.273 numbers them (`2` for unstated), each plane's
-    /// start in this module's memory, each plane's stride, and whether it is a
-    /// keyframe. The planes are good until the next [`Self::input`].
+    /// start in this module's memory, each plane's stride, whether it is a
+    /// keyframe, and its serial, which [`Self::release`] takes. The planes
+    /// are good until it is released, and all sixteen are 0 once it is.
     pub fn picture(&mut self) -> *const i32 {
         let p = &mut self.picture;
         *p = [0; PICTURE_FIELDS];
-        if let Some(d) = &self.held {
+        if let Some((serial, d)) = self.held.last().filter(|(s, _)| *s == self.serial) {
             let f = &d.frame;
             // VP9's color_space as H.273's matrix, primaries and transfer.
             let [matrix, primaries, transfer] = match f.colour.space {
@@ -139,6 +152,7 @@ impl Decoder {
                 p[10 + i] = plane.stride as i32;
             }
             p[13] = d.keyframe as i32;
+            p[14] = *serial as i32;
         }
         p.as_ptr()
     }
