@@ -101,7 +101,9 @@ export function decodeFrame(loaded: LoadedModule, decoder: ModuleDecoder, unit: 
   const before = last.get(decoder);
   if (before !== undefined) decoder.release(before);
   last.delete(decoder);
-  return decodeHeld(loaded, decoder, unit);
+  const picture = decodeHeld(loaded, decoder, unit);
+  if (picture) last.set(decoder, picture.serial);
+  return picture;
 }
 
 /** Feeds `unit` to `decoder` and reads the picture it decoded to, if any, which is held until released. */
@@ -110,7 +112,6 @@ export function decodeHeld(loaded: LoadedModule, decoder: ModuleDecoder, unit: U
   new Uint8Array(loaded.memory.buffer, at, unit.length).set(unit);
   if (!decoder.decode()) return null;
   const p = new Int32Array(loaded.memory.buffer, decoder.picture(), 16);
-  last.set(decoder, p[14]!);
   return {
     width: p[0]!,
     height: p[1]!,
