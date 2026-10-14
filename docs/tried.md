@@ -10,6 +10,14 @@ still.
 
 ## Most of the still blocks' copy not made
 
+On the video of wlshare's captures, whose every block is predicted again,
+the fourth way is faster and is done: a 64×64 block is copied only where a
+still block of it keeps the samples, decided once its row is parsed, 2% to
+5% fewer cycles on the 4K video, the walk and the browser and the same on
+the terminal ([measurements.md](measurements.md)). The whole row was the
+faster on the captures below because nearly every 64×64 block of them had a
+still block in it, and so was copied either way.
+
 What this section measured is done another way now that `screen-vp9`
 0.0.12 coded a frame told where the picture changed through libvpx's active
 map: see the README. The blocks outside the change are a segment that skips

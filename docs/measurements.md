@@ -416,3 +416,49 @@ to four and nothing past them, but on the browser, 12% at five, so the
 measurements stay at four. With one column its pool still makes the frame
 twice as fast, filtering and reconstructing beside the parsing, where
 libvpx's gains are its loop filter's thread alone.
+
+What each part of the module costs, measured as the cycles a frame a build
+saves that leaves the part out, on one thread, M cycles a frame of the base
+build's. Leaving the residual out of a filtered stream changes what the loop
+filter does too, so the unfiltered 4K samples give the clean numbers:
+
+| left out | video 1920×1080 (67.3) | video 3840×2160 (147.2) | walk 3840×2160 (116.0) | browser 3840×2160 (110.4) | terminal 1440×900 (5.9) |
+|---|---|---|---|---|---|
+| intra prediction | 2.2 | 5.1 | 6.4 | 10.3 | 1.0 |
+| the transforms in plain code | 0.8 | 3.9 | 4.2 | 1.0 | |
+| every transform | 13.4 | 14.0 | 10.5 | 2.8 | |
+| the row copy | 0.6 | 4.8 | 5.0 | 8.1 | |
+| the loop filter | 17.9 | | | | 1.3 |
+
+libvpx's own transforms are 6.7 M cycles of the 4K video frame, 4.3 of the
+walk's and 1.2 of the browser's, its intra prediction 3.1, 3.8 and 6.1. A 4K
+video frame has about 100,000 transform blocks: 72,000 4×4 DCTs, 41,000 of
+them a DC alone, 5,000 4×4 ADSTs, 22,000 8×8 DCTs, 13,000 of them a DC
+alone, and some 500 of 16×16; the module's transforms are some 140 cycles a
+block, libvpx's 67.
+
+Two changes came of it, checked bit for bit on every sample on one thread
+and four. The row of an inter frame was copied whole from the LAST
+reference before its blocks were made, so that a still block was in place
+already; on a video, whose every block is predicted again, that was 25 MB a
+4K frame copied for nothing. A 64×64 block is now copied only where a still
+block of it keeps the samples, decided once its row is parsed. And the
+vector sub-sample filters keep the rows the next output row shares in lanes
+rather than write an intermediate and load eight rows again. M cycles a
+frame, one thread and four, the base, the copy alone and both:
+
+| | one thread | | | four | | |
+|---|---|---|---|---|---|---|
+| terminal 1440×900 | 6.2 | 5.9 | 6.0 | 8.3 | 7.8 | 8.5 |
+| terminal 3840×2160 | 10.2 | 10.4 | 10.2 | 12.1 | 12.4 | 12.2 |
+| video 1920×1080 | 67.3 | 67.7 | 67.3 | 68.2 | 68.9 | 68.0 |
+| video 3840×2160 | 149.8 | 146.8 | 144.4 | 152.4 | 148.2 | 145.9 |
+| walk 3840×2160 | 119.2 | 116.6 | 114.1 | 120.5 | 117.5 | 114.7 |
+| browser 3840×2160 | 114.6 | 109.1 | 107.6 | 127.4 | 117.7 | 118.6 |
+| drag 3840×2160 | 38.2 | 36.8 | 37.3 | 43.3 | 39.9 | 39.8 |
+| uncover 1920×1080 | 25.2 | 25.2 | 25.1 | 25.5 | 25.8 | 24.7 |
+
+The filters gain less than the intermediate's loads would suggest: on x86 a
+load widened from memory is one instruction, as the move of a register is,
+so the sixteen multiplies and sixteen adds of a row of eight samples are
+the filter whichever way its rows arrive.
