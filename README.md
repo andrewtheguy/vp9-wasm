@@ -294,23 +294,31 @@ where the picture changed: 0.0.18 for the samples now on the drive. `bench/sampl
 `bench` folder of the artifacts drive, or from `VP9_BENCH_SOURCE`, to
 `tmp/bench`, and no run reads the drive. That folder has a sample of every
 size captured and of the other scenarios, and
-`SAMPLES` names others to decode instead. The script does what a busy host needs: it pins the builds to the same
+`SAMPLES` names others to decode instead. Each build of the module decodes
+under each engine of `ENGINES`, Bun and Node unless it names one:
+JavaScriptCore, Bun's and Safari's, and V8, Chrome's. The target is a Mac on
+ARM, as Safari there and on iOS runs the module, and a Mac on x86 the next,
+and each engine compiles the module otherwise on each: JavaScriptCore on x86
+makes a shuffle of two vectors two `pshufb` and an `or`, where V8 and
+JavaScriptCore on ARM make it one instruction. A change is decided on a Mac
+on ARM; a Linux host on x86 measures the Mac on x86. The script does what a busy host needs: it pins the builds to the same
 cores (`taskset`), alternates them round by round, waits for the load to fall
 before each stream, and prints `perf stat -e instructions:u,cycles:u` beside
 the times, with the medians of three rounds. A frame's counts and mean time
 are those of the frames after the first: each run is followed by one of the
-first frame alone, which is taken off, since the start of Bun and the
-module's compiling, or of ffmpeg, is 175 to 350 M cycles, as much as 120
+first frame alone, which is taken off, since the start of the engine and
+the module's compiling, or of ffmpeg, is 175 to 350 M cycles, as much as 120
 quiet frames, and ffmpeg's the larger. The engine goes on optimising the
 module's functions over the frames after it, which the counts keep: half a
 quiet frame's, a tenth of a video frame's at 1920×1080
-([docs/measurements.md](docs/measurements.md)). On a Mac, where the module is
-what Safari on macOS and iOS runs, it runs the same way unpinned, since macOS
-holds no process to a core, and prints the counts `/usr/bin/time -l` gives,
-user and kernel together; its quiet load is 3, where an idle Mac sits near 2
-(`QUIET` sets it). JavaScriptCore is Bun's engine as it is Safari's, and on
-Apple silicon it lowers SIMD128 to NEON, so a change can rank otherwise there
-than on x86: a Mac's numbers are compared with a Mac's.
+([docs/measurements.md](docs/measurements.md)). On a Mac it runs unpinned,
+since macOS holds no process to a core, and prints the counts `/usr/bin/time
+-l` gives, user and kernel together. A Mac in use is never idle, so it is not
+waited on (`QUIET` names a load to wait for), and it takes five rounds, the
+builds alternating within each, so that the load and a run put on an
+efficiency core fall on every build alike; its instructions are exact and its
+cycles near, and its milliseconds the most moved by the load. A Mac's numbers
+are compared with a Mac's.
 
 ## Requirements
 

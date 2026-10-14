@@ -1,12 +1,15 @@
-// Loads the decoder's module as released (build/out, built by ./build.sh) under
-// Bun as remotex's decode worker loads it: the module instantiated on a shared
-// memory, its pool's threads started as workers that each run an instance of it,
-// and a picture read from where the decoder left its planes.
+// Loads the decoder's module as released (build/out, built by ./build.sh) as
+// remotex's decode worker loads it: the module instantiated on a shared memory,
+// its pool's threads started as workers that each run an instance of it, and a
+// picture read from where the decoder left its planes. It runs under Bun, whose
+// engine is Safari's, and under Node, whose engine is Chrome's.
 
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Worker } from "node:worker_threads";
 
-export const OUT_DIR = resolve(process.env.VP9_WASM_DIR ?? `${import.meta.dir}/../build/out`);
+export const OUT_DIR = resolve(process.env.VP9_WASM_DIR ?? `${import.meta.dirname}/../build/out`);
 
 /** What rust/vp9-web/src/lib.rs exports, as wasm-bindgen's glue presents it. */
 interface Glue {
@@ -61,17 +64,17 @@ export async function loadModule(threads: number): Promise<LoadedModule> {
     throw new Error(`no vp9.js and vp9_bg.wasm in ${OUT_DIR}: run ./build.sh, or set VP9_WASM_DIR`);
   }
   const glue = (await import(js)) as Glue;
-  const bytes = new Uint8Array(await Bun.file(wasm).arrayBuffer());
+  const bytes = new Uint8Array(readFileSync(wasm));
   const { memory } = await glue.default({ module_or_path: bytes });
   const seat: PoolSeat = { js, module: glue.module(), memory };
   const workers: Worker[] = [];
   try {
     await Promise.all(
       Array.from({ length: threads }, () => new Promise<void>((resolve, reject) => {
-        const worker = new Worker(new URL("./pool.worker.ts", import.meta.url), { type: "module" });
+        const worker = new Worker(new URL("./pool.worker.ts", import.meta.url));
         workers.push(worker);
-        worker.onmessage = ({ data }: MessageEvent<string | null>) => (data === null ? resolve() : reject(new Error(data)));
-        worker.onerror = (event) => reject(new Error(event.message || "a pool worker did not start"));
+        worker.on("message", (data: string | null) => (data === null ? resolve() : reject(new Error(data))));
+        worker.on("error", (error: Error) => reject(new Error(error.message || "a pool worker did not start")));
         worker.postMessage(seat);
       })),
     );
@@ -129,7 +132,7 @@ export function decodeHeld(loaded: LoadedModule, decoder: ModuleDecoder, unit: U
 /** `ffmpeg -f framemd5`'s digest of the picture: its three planes, rows packed. */
 export function pictureMd5(loaded: LoadedModule, picture: ModulePicture): string {
   const heap = new Uint8Array(loaded.memory.buffer);
-  const hasher = new Bun.CryptoHasher("md5");
+  const hasher = createHash("md5");
   for (const plane of picture.planes) {
     for (let y = 0; y < picture.height; y++) {
       hasher.update(heap.subarray(plane.address + y * plane.stride, plane.address + y * plane.stride + picture.width));
