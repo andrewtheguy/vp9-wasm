@@ -269,8 +269,11 @@ blocks it wrote, each frame stamps its blocks with the newest frame of its
 reference chain that did, and a buffer still holding a frame of that chain
 is copied into only where a later frame wrote. A quiet 4K frame, a kilobyte
 that touches three or four of its 2,040 blocks, was 60% that copy; its
-cycles are 44% fewer for it and its median frame four times faster, and a
-busy frame copies the whole row as before. Before 0.0.3, filtering two
+cycles are 44% fewer for it and its median frame four times faster. And a
+64×64 block is copied only where a still block of it keeps the samples, once
+its row is parsed, so a video's frame, whose every block is predicted again,
+copies nothing: 2% to 5% fewer cycles on the 4K video, the walk and the
+browser. Before 0.0.3, filtering two
 edges that lie end to end in one vector and the edge kernels as functions of
 their own were measured and are not done either: those are in
 [docs/tried.md](docs/tried.md). Where a frame's time goes, what threads

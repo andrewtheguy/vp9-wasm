@@ -57,8 +57,8 @@ impl ModeInfo {
 
     /// Whether the block is the last frame's samples at its own place: a
     /// skipped block with no motion from the LAST reference, which on a
-    /// screen is nearly every block. Its row started as those samples
-    /// (`Recon::start_row`), so it costs nothing to make.
+    /// screen is nearly every block. Its 64×64 block started as those
+    /// samples (`Recon::start_row`), so it costs nothing to make.
     #[inline]
     pub fn still(&self) -> bool {
         self.ref_frame == LAST_FRAME && self.skip && self.sub_mv == [Mv::default(); 4]
