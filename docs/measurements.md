@@ -314,7 +314,7 @@ reference. What was concluded from it above, that a busy frame is two
 thirds token parsing and the module within a twentieth of libvpx, is true of
 the flood and of nothing else here.
 
-Release 0.0.9 against ffmpeg's libvpx, 120 frames of each and 50 of
+Release 0.0.9 against ffmpeg's libvpx, 120 frames of each and 48 of
 uncover, the medians of three rounds of `bench/run.sh`, which counts the
 frames after the first: a run of the first frame alone is taken off each
 run, since the start of Bun and the module's compiling, or of ffmpeg, is
@@ -350,8 +350,8 @@ is mostly its first frames after the keyframe, its median a quarter of it.
 | browser 3840×2160 | 4, off | 109.5 | 83.2 | +32% | 12.88 | 10.40 |
 | drag 1920×1080 | 2, on | 21.2 | 14.2 | +49% | 3.22 | 4.05 |
 | drag 3840×2160 | 4, off | 37.9 | 37.9 | +0% | 6.04 | 6.20 |
-| uncover 1920×1080 | 2, on | 24.8 | 12.0 | +107% | 4.12 | 3.27 |
-| uncover 3840×2160 | 4, off | 53.7 | 42.9 | +25% | 7.82 | 7.04 |
+| uncover 1920×1080 | 2, on | 25.4 | 12.5 | +103% | 4.32 | 3.74 |
+| uncover 3840×2160 | 4, off | 53.6 | 45.1 | +19% | 8.76 | 8.55 |
 | walk 1920×1080 | 2, on | 53.4 | 33.8 | +58% | 6.43 | 6.66 |
 | walk 3840×2160 | 4, off | 117.0 | 80.8 | +45% | 12.00 | 12.35 |
 | flood 1280×800, for reference | 1, on | 267.6 | 256.8 | +4% | 67.91 | 76.61 |
@@ -365,7 +365,19 @@ terminal under 2048 wide, where the loop filter is on: 3 M cycles a frame
 more, of 6. From 2048 wide, in four columns without the filter, it takes
 half libvpx's cycles on the terminal. Four threads hide the rest: the module
 is ahead of libvpx or within a tenth everywhere but the browser at 4K, 12.9
-ms a frame for 10.4, and uncover, whose frames each uncover a window anew.
+ms a frame for 10.4, and uncover at 1920×1080, 4.3 for 3.7, whose frames
+each uncover a window anew.
+
+Uncover's rows are of its sample cut again on 2026-10-14 from its capture
+trimmed to begin at the terminal's first move: as captured it began with
+two keyframes of the still page and 3.5 s of nothing. Its frames cost the
+same a frame either way, to 5% on either decoder. The second
+keyframe had seemed to cost 221 M cycles, a run of two frames less a run of
+one; but the second frame of the trimmed sample, an inter frame of 2 KB,
+costs 107 M cycles the same way, four frames of the run, and the terminal's
+53 M, nine of its frames. What a run's second frame costs is mostly the
+module still starting, whatever the frame, and every sample counts it in
+its frames.
 
 A picture held while the next frame decodes, as the page holds one while it
 uploads it since 0.0.9, costs nothing: the cycles a frame are the same to
@@ -493,7 +505,7 @@ frame, one thread and four, the base, the copy alone and both:
 | walk 3840×2160 | 119.2 | 116.6 | 114.1 | 120.5 | 117.5 | 114.7 |
 | browser 3840×2160 | 114.6 | 109.1 | 107.6 | 127.4 | 117.7 | 118.6 |
 | drag 3840×2160 | 38.2 | 36.8 | 37.3 | 43.3 | 39.9 | 39.8 |
-| uncover 1920×1080 | 25.2 | 25.2 | 25.1 | 25.5 | 25.8 | 24.7 |
+| uncover 1920×1080 | 25.4 | 25.7 | 26.0 | 23.8 | 23.8 | 24.0 |
 
 The filters gain less than the intermediate's loads would suggest: on x86 a
 load widened from memory is one instruction, as the move of a register is,

@@ -16,8 +16,8 @@ video and the walk, a quarter to a third more on the browser, two thirds
 more or worse on a quiet terminal under 2048 wide, and half libvpx's on the
 terminal from 2048 wide; it is level only on the flood, which is token
 parsing. On four threads it is ahead of libvpx or within a tenth everywhere
-but the browser at 4K and uncover. Set beside libvpx's own profile, the
-module's tokens and modes are level on the video; what it takes more is
+but the browser at 4K and uncover at 1920×1080. Set beside libvpx's own
+profile, the module's tokens and modes are level on the video; what it takes more is
 below, each part's cost measured by a build that leaves it out (which
 changes the picture, so the costs are near and not exact). In the order the
 work would go:
