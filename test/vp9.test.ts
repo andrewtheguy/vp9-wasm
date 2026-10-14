@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import { type Fixture, type FixtureName, loadFixtures } from "./fixtures";
-import { decodeFrame, type LoadedModule, loadModule, type ModuleDecoder, type ModulePicture, pictureMd5 } from "./module";
+import { decodeFrame, decodeHeld, type LoadedModule, loadModule, type ModuleDecoder, type ModulePicture, pictureMd5 } from "./module";
 
 // The pool remotex would start, at most.
 const POOL = 4;
@@ -122,6 +122,37 @@ describe("a 4:4:4 stream", () => {
     withDecoder(1, (d) => {
       expect(pictureMd5(loaded, decodeFrame(loaded, d, unit)!)).toBe(fixture.md5s[1]!);
       expect(decodeAll(d, fixture.frames.slice(2)).md5s).toEqual(fixture.md5s.slice(2));
+    });
+  });
+
+  test("a picture is good until it is released, while the frames after it decode", () => {
+    // The page reads a picture while the next frames decode: three held at once here,
+    // released out of order.
+    const fixture = fixtures["screen-352x256"];
+    withDecoder(POOL, (d) => {
+      const held: ModulePicture[] = [];
+      const md5s: string[] = [];
+      const read = (picture: ModulePicture) => {
+        md5s.push(pictureMd5(loaded, picture));
+        d.release(picture.serial);
+      };
+      for (const frame of fixture.frames) {
+        const picture = decodeHeld(loaded, d, frame);
+        if (picture) held.push(picture);
+        if (held.length === 3) {
+          // The oldest is read last of the two, after the middle one is gone.
+          const [oldest, middle] = held.splice(0, 2);
+          const middleMd5 = pictureMd5(loaded, middle!);
+          d.release(middle!.serial);
+          read(oldest!);
+          md5s.push(middleMd5);
+        }
+      }
+      for (const picture of held) read(picture);
+      expect(md5s).toEqual(fixture.md5s);
+      // A serial not held is nothing.
+      d.release(0);
+      d.release(1 << 30);
     });
   });
 

@@ -20,6 +20,7 @@ export interface ModuleDecoder {
   input(size: number): number;
   decode(): boolean;
   picture(): number;
+  release(serial: number): void;
   free(): void;
 }
 
@@ -34,6 +35,8 @@ export interface ModulePicture {
   transfer: number;
   planes: { address: number; stride: number }[];
   keyframe: boolean;
+  /** Which of the decoder's pictures it is, for `release`. */
+  serial: number;
 }
 
 export interface LoadedModule {
@@ -87,12 +90,27 @@ export async function loadModule(threads: number): Promise<LoadedModule> {
   };
 }
 
-/** Feeds `unit`, one frame of the stream, to `decoder` and reads the picture it decoded to, if any. */
+// The picture each decoder last gave `decodeFrame`, which the next call releases.
+const last = new WeakMap<ModuleDecoder, number>();
+
+/**
+ * Feeds `unit`, one frame of the stream, to `decoder` and reads the picture it decoded to, if any: good until the next
+ * call for the decoder, which releases it, as a page done with each picture before the next would.
+ */
 export function decodeFrame(loaded: LoadedModule, decoder: ModuleDecoder, unit: Uint8Array): ModulePicture | null {
+  const before = last.get(decoder);
+  if (before !== undefined) decoder.release(before);
+  last.delete(decoder);
+  return decodeHeld(loaded, decoder, unit);
+}
+
+/** Feeds `unit` to `decoder` and reads the picture it decoded to, if any, which is held until released. */
+export function decodeHeld(loaded: LoadedModule, decoder: ModuleDecoder, unit: Uint8Array): ModulePicture | null {
   const at = decoder.input(unit.length);
   new Uint8Array(loaded.memory.buffer, at, unit.length).set(unit);
   if (!decoder.decode()) return null;
   const p = new Int32Array(loaded.memory.buffer, decoder.picture(), 16);
+  last.set(decoder, p[14]!);
   return {
     width: p[0]!,
     height: p[1]!,
@@ -103,6 +121,7 @@ export function decodeFrame(loaded: LoadedModule, decoder: ModuleDecoder, unit: 
     transfer: p[6]!,
     planes: [0, 1, 2].map((i) => ({ address: p[7 + i]!, stride: p[10 + i]! })),
     keyframe: p[13] === 1,
+    serial: p[14]!,
   };
 }
 
