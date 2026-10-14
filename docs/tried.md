@@ -10,6 +10,14 @@ still.
 
 ## Most of the still blocks' copy not made
 
+On the video of wlshare's captures, whose every block is predicted again,
+the fourth way is faster and is done: a 64×64 block is copied only where a
+still block of it keeps the samples, decided once its row is parsed, 2% to
+5% fewer cycles on the 4K video, the walk and the browser and the same on
+the terminal ([measurements.md](measurements.md)). The whole row was the
+faster on the captures below because nearly every 64×64 block of them had a
+still block in it, and so was copied either way.
+
 What this section measured is done another way now that `screen-vp9`
 0.0.12 coded a frame told where the picture changed through libvpx's active
 map: see the README. The blocks outside the change are a segment that skips
@@ -120,11 +128,28 @@ chain like every other block and token, and what the other thirty cycles
 are is mostly the branch on whether the block has coefficients, which a
 third of the Mac's do.
 
+## The transforms' dispatch
+
+On wlshare's 4K video a frame's transforms are 14 M cycles, some 140 a
+block against libvpx's 67, and a fifth of `inverse_add`'s samples are its
+entry, which takes the 4 KB of stack the plain 32×32 transform's
+intermediate needs on every call, a 4×4's too. The plain transforms moved to
+a function of their own, so that the vector paths and the DC alone take
+none of it and the shift table is no longer stored on each call: the same
+cycles on every sample to 1%. The entry was where the samples land, not
+where the time goes. Not kept.
+
 ## The loop filter's kernels
 
 - The six kernels as functions of their own rather than inlined into the
   filter's loop: 4% more instructions and no fewer cycles, although the loop
-  is a 5,000-instruction function full of spills.
+  is a 5,000-instruction function full of spills. Tried again on wlshare's
+  captures, the vertical and the horizontal kernel each a function of its
+  own: on one thread 1% to 11% fewer cycles on the quiet terminal under 2048
+  wide, its median frame a fifth to a third faster (0.69 ms to 0.51 at
+  1280×800), and 0.5% to 1.3% more on the video, the walk and the browser;
+  on four threads, as the page decodes, every filtered sample within 2%
+  either way. Not kept.
 - Two edges that lie end to end in one vector, whatever their widths
   (`tmp/lf-pair-kept` holds that version): on this tree 17% more
   instructions and 12% more cycles on the Mac capture, 23% and 17% on the

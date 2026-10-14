@@ -314,53 +314,275 @@ reference. What was concluded from it above, that a busy frame is two
 thirds token parsing and the module within a twentieth of libvpx, is true of
 the flood and of nothing else here.
 
-120 frames of each, 50 of uncover, the medians of three rounds
-(`bench/run.sh`); libvpx's milliseconds are its mean, the one number ffmpeg
-gives, and the module's the mean beside it:
+Release 0.0.9 against ffmpeg's libvpx, 120 frames of each and 48 of
+uncover, the medians of three rounds of `bench/run.sh`, which counts the
+frames after the first: a run of the first frame alone is taken off each
+run, since the start of Bun and the module's compiling, or of ffmpeg, is
+175 to 350 M cycles, ffmpeg's the larger, as much as 120 quiet frames. Counted
+with it, as the first table of this section was, a quiet frame was a third
+of the module's cycles too few against libvpx's. The module's milliseconds
+are its own clock's mean, libvpx's its wall time; the mean of a quiet sample
+is mostly its first frames after the keyframe, its median a quarter of it.
 
-| | M cycles a frame, one thread | | | mean ms a frame, four threads | |
+| | columns, filter | M cycles, module | libvpx | | mean ms on four, module | libvpx |
+|---|---|---|---|---|---|---|
+| terminal 1280×800 | 1, on | 5.3 | 2.1 | +152% | 1.46 | 1.45 |
+| terminal 1440×900 | 2, on | 6.0 | 2.9 | +107% | 1.27 | 1.74 |
+| terminal 1600×1000 | 2, on | 6.4 | 3.8 | +68% | 1.72 | 2.05 |
+| terminal 1920×1080 | 2, on | 7.2 | 5.0 | +44% | 1.61 | 2.35 |
+| terminal 2048×1536 | 4, off | 6.9 | 7.2 | -4% | 2.01 | 1.64 |
+| terminal 2560×1600 | 4, off | 7.6 | 10.3 | -26% | 2.16 | 2.06 |
+| terminal 2880×1800 | 4, off | 8.7 | 13.4 | -35% | 2.41 | 2.72 |
+| terminal 3200×2000 | 4, off | 9.7 | 16.8 | -42% | 2.46 | 3.16 |
+| terminal 3456×2168 | 4, off | 10.0 | 20.0 | -50% | 2.86 | 4.05 |
+| terminal 3840×2160 | 4, off | 10.2 | 22.2 | -54% | 3.12 | 3.91 |
+| video 1280×800 | 1, on | 43.2 | 26.4 | +64% | 6.90 | 7.58 |
+| video 1440×900 | 2, on | 51.5 | 33.0 | +56% | 6.07 | 6.55 |
+| video 1600×1000 | 2, on | 59.8 | 39.0 | +53% | 6.78 | 7.31 |
+| video 1920×1080 | 2, on | 67.5 | 45.3 | +49% | 7.62 | 8.74 |
+| video 2048×1536 | 4, off | 84.6 | 58.6 | +44% | 8.70 | 8.08 |
+| video 2560×1600 | 4, off | 89.1 | 65.8 | +35% | 9.31 | 9.78 |
+| video 2880×1800 | 4, off | 110.6 | 80.0 | +38% | 11.48 | 11.48 |
+| video 3200×2000 | 4, off | 130.8 | 95.7 | +37% | 13.34 | 14.75 |
+| video 3456×2168 | 4, off | 150.5 | 109.3 | +38% | 14.68 | 16.50 |
+| video 3840×2160 | 4, off | 147.5 | 107.5 | +37% | 14.95 | 16.64 |
+| browser 1920×1080 | 2, on | 37.8 | 30.6 | +24% | 5.29 | 6.29 |
+| browser 3840×2160 | 4, off | 109.5 | 83.2 | +32% | 12.88 | 10.40 |
+| drag 1920×1080 | 2, on | 21.2 | 14.2 | +49% | 3.22 | 4.05 |
+| drag 3840×2160 | 4, off | 37.9 | 37.9 | +0% | 6.04 | 6.20 |
+| uncover 1920×1080 | 2, on | 25.4 | 12.5 | +103% | 4.32 | 3.74 |
+| uncover 3840×2160 | 4, off | 53.6 | 45.1 | +19% | 8.76 | 8.55 |
+| walk 1920×1080 | 2, on | 53.4 | 33.8 | +58% | 6.43 | 6.66 |
+| walk 3840×2160 | 4, off | 117.0 | 80.8 | +45% | 12.00 | 12.35 |
+| flood 1280×800, for reference | 1, on | 267.6 | 256.8 | +4% | 67.91 | 76.61 |
+| flood 1920×1080, for reference | 2, on | 567.8 | 552.7 | +3% | 77.08 | 89.51 |
+| flood 2560×1600, for reference | 4, off | 673.9 | 666.8 | +1% | 62.00 | 61.15 |
+| flood 3840×2160, for reference | 4, off | 1393.1 | 1374.8 | +1% | 122.68 | 124.58 |
+
+On one thread the module is a third to two thirds behind libvpx on the
+video and the walk, at every size, and two thirds behind or more on a quiet
+terminal under 2048 wide, where the loop filter is on: 3 M cycles a frame
+more, of 6, most of which is the engine still starting (below). From 2048 wide, in four columns without the filter, it takes
+half libvpx's cycles on the terminal. Four threads hide the rest: the module
+is ahead of libvpx or within a tenth everywhere but the browser at 4K, 12.9
+ms a frame for 10.4, and uncover at 1920×1080, 4.3 for 3.7, whose frames
+each uncover a window anew.
+
+Uncover's rows are of its sample cut again on 2026-10-14 from its capture
+trimmed to begin at the terminal's first move: as captured it began with
+two keyframes of the still page and 3.5 s of nothing. Its frames cost the
+same a frame either way, to 5% on either decoder. The second
+keyframe had seemed to cost 221 M cycles, a run of two frames less a run of
+one; but the second frame of the trimmed sample, an inter frame of 2 KB,
+costs 107 M cycles the same way, four frames of the run, and the terminal's
+53 M, nine of its frames: what a run's second frame costs is mostly the
+engine still starting, whatever the frame.
+
+The engine's start is in every sample's frames. Bun's JavaScriptCore runs
+the module in an interpreter, then as its quick compiler made it, and
+compiles each function again with its optimising compiler on a thread of
+its own once the function has run enough. `bench/run.sh` counts the whole
+process and takes off a run of the first frame alone, so the frames after
+the first count that thread and the slower code that ran before it. Of a
+run of the terminal's 120 frames on one thread the compiler's thread takes
+417 M cycles, 347 M of them after the first frame, 2.9 M a frame of its
+6.2; of the 1920×1080 video's, 873 M, 811 M of them after the first frame,
+6.8 M a frame of 68. With the optimising compiler off the terminal is 3.1 M
+cycles a frame, and the video 108. Decoded once whole in the process by a
+decoder of its own before it is counted, M cycles a frame on one thread,
+this branch's module beside libvpx's of the table above:
+
+| | as `bench/run.sh` counts | after one pass | libvpx |
+|---|---|---|---|
+| terminal 1440×900 | 6.2 | 2.9 | 2.9 |
+| uncover 1920×1080 | 28.3 | 12.4 | 12.5 |
+| video 1280×800 | 44.1 | 34.4 | 26.4 |
+| video 1920×1080 | 68.4 | 58.5 | 45.3 |
+| video 3840×2160 | 140.0 | 129.6 | 107.5 |
+
+The video's second pass leaves the compiler's thread 24 M cycles, nothing to
+speak of; the terminal's 148 M, since its light frames make a function hot
+slowly, so its 2.9 still holds some. After four passes the terminal's
+decoding thread alone takes about 1.3 M cycles a frame, and the whole
+process from 1.4 to 3.1 after two to eight passes, as the compiling lands
+in one pass or another. Warm, then, the module is level with libvpx on the
+terminal and uncover and a fifth to a third behind on the video, and the
+cold gaps of the table above on the quiet samples are the engine's start.
+
+A page pays it once. remotex keeps the module's worker for the paint
+worker's life, so a stream or a resize after the first runs code already
+optimised; each function is compiled again once in the page, when it first
+runs hot, which on a desktop that turns from text to video is then. It is
+0.4 to 0.9 G cycles of the compiler's thread, a tenth to a third of a second
+of one core, and the slower code before it, in a session's first seconds.
+Not followed further, since a session past those seconds runs at the warm
+figure, and builds compared cold each pay the same start: the benchmark
+still counts cold. V8, Chrome's engine, starts otherwise and was not
+measured.
+
+A picture held while the next frame decodes, as the page holds one while it
+uploads it since 0.0.9, costs nothing: the cycles a frame are the same to
+1% on the terminal, the video, the browser and drag, whether the last
+picture is released before the next frame or after it.
+
+What libvpx and the module spend a frame on, on one thread: the module
+profiled under Node (`node --perf-basic-prof`), libvpx as `vpxdec` built
+from its 1.16.0 source as Debian configures it, with symbols, whose counts
+are ffmpeg's to 3%. Each function is put with the work it does and its share
+scaled to the cycles above; M cycles a frame, module and libvpx:
+
+| | video 1920×1080 | video 3840×2160 | walk 3840×2160 | browser 3840×2160 |
+|---|---|---|---|---|
+| tokens: `decode_coefs`, `tokens`, `large_token`; `decode_coefs`, `vp9_decode_block_tokens` | 19.7, 16.9 | 45.5, 44.5 | 26.5, 24.7 | 19.6, 20.4 |
+| modes: `Tile::block` and the trees; `vp9_read_mode_info` and `decode_block` | 6.8, 6.1 | 19.6, 20.1 | 18.1, 17.3 | 33.1, 24.9 |
+| prediction from the reference: `convolve`; `vpx_convolve*`, `dec_build_inter_predictors_sb` | 11.4, 7.6 | 43.6, 30.6 | 37.3, 28.4 | 22.9, 26.2 |
+| reconstruction: `Recon::block`, `residual`, the transforms, intra prediction | 6.8, 2.7 | 25.6, 9.8 | 21.1, 8.1 | 19.0, 7.3 |
+| the loop filter | 16.7, 11.1 | | | |
+| the rest, mostly the row copy (libc's `memmove`) | 4.2, 0.8 | 10.5, 1.7 | 11.5, 1.9 | 12.7, 3.8 |
+
+Token parsing and the modes, which every earlier section found the frame
+waiting on, are level with libvpx's on the video. The module's 40 M cycles
+more on the 4K video frame are its reconstruction, 16 M, its prediction, 13
+M, and the rest, 9 M, nearly all of it the libc `memmove` behind the row
+copy: every row of an inter frame starts as the last frame's (`start_row`), 25
+MB a 4K frame, where on the video every block is then predicted again. libvpx
+makes no such copy and predicts a still block by `vpx_convolve_copy`, 10 M of
+its frame. Under 2048 wide the loop filter is 6 M more of the 22. On the
+browser, a page scrolled, it is the modes, 8 M more, and not the
+prediction.
+
+The threads, on the video, the walk and the browser: mean milliseconds a
+frame after the first, module and libvpx, one thread and four as above,
+two to four on four cores and five and six on six:
+
+| | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| video 1280×800, one column | 13.8, 8.2 | 7.4, 8.2 | 7.0, 8.5 | 6.9, 7.6 | 7.7, 7.7 | 8.1, 7.6 |
+| video 1920×1080, two | 21.3, 14.2 | 12.1, 10.1 | 9.2, 9.8 | 7.5, 8.9 | 7.4, 8.8 | 7.8, 9.0 |
+| video 2560×1600, four | 27.9, 20.5 | 15.7, 13.7 | 11.8, 13.8 | 9.3, 9.8 | 9.8, 9.9 | 10.7, 10.0 |
+| video 3840×2160, four | 46.1, 33.8 | 26.4, 22.3 | 18.9, 22.1 | 14.9, 16.2 | 14.8, 16.9 | 15.6, 16.7 |
+| walk 3840×2160, four | 37.7, 25.6 | 20.9, 16.8 | 13.9, 15.1 | 12.2, 12.4 | 12.1, 12.6 | 12.4, 12.8 |
+| browser 3840×2160, four | 34.7, 25.9 | 20.8, 16.6 | 15.1, 13.6 | 12.7, 10.3 | 11.1, 10.3 | 11.4, 10.2 |
+
+What the flood said of the threads holds of the video: the module gains up
+to four and nothing past them, but on the browser, 12% at five, so the
+measurements stay at four. With one column its pool still makes the frame
+twice as fast, filtering and reconstructing beside the parsing, where
+libvpx's gains are its loop filter's thread alone.
+
+What each part of the module costs, measured as the cycles a frame a build
+saves that leaves the part out, on one thread, M cycles a frame of the base
+build's. Leaving the residual out of a filtered stream changes what the loop
+filter does too, so the unfiltered 4K samples give the clean numbers:
+
+| left out | video 1920×1080 (67.3) | video 3840×2160 (147.2) | walk 3840×2160 (116.0) | browser 3840×2160 (110.4) | terminal 1440×900 (5.9) |
 |---|---|---|---|---|---|
-| | module | libvpx | | module | libvpx |
-| terminal 1440×900, two columns, filtered | 7.5 | 4.9 | +53% | 1.84 | 1.93 |
-| terminal 3840×2160, four, unfiltered | 12.3 | 23.9 | −49% | 3.75 | 4.54 |
-| video 1280×800, one, filtered | 43.7 | 28.2 | +55% | 7.15 | 7.53 |
-| video 1920×1080, two, filtered | 68.1 | 47.0 | +45% | 7.62 | 8.82 |
-| video 2560×1600, four, unfiltered | 89.4 | 67.2 | +33% | 9.39 | 10.38 |
-| video 3840×2160, four, unfiltered | 147.7 | 108.6 | +36% | 14.88 | 16.74 |
-| walk 1920×1080 | 54.1 | 35.5 | +52% | 6.33 | 6.75 |
-| walk 3840×2160 | 116.7 | 81.9 | +42% | 12.50 | 12.76 |
-| browser 1920×1080 | 42.4 | 34.3 | +24% | 5.30 | 6.57 |
-| browser 3840×2160 | 114.0 | 88.6 | +29% | 13.55 | 10.81 |
-| drag 1920×1080 | 23.8 | 17.1 | +39% | 3.83 | 4.40 |
-| drag 3840×2160 | 42.4 | 42.0 | +1% | 6.63 | 6.88 |
-| uncover 1920×1080 | 37.4 | 21.9 | +71% | 5.27 | 4.20 |
-| uncover 3840×2160 | 68.9 | 59.2 | +16% | 10.06 | 8.98 |
-| flood 1920×1080, for reference | 577.0 | 563.6 | +2% | 77.00 | 89.25 |
+| intra prediction | 2.2 | 5.1 | 6.4 | 10.3 | 1.0 |
+| the transforms in plain code | 0.8 | 3.9 | 4.2 | 1.0 | |
+| every transform | 13.4 | 14.0 | 10.5 | 2.8 | |
+| the row copy | 0.6 | 4.8 | 5.0 | 8.1 | |
+| the loop filter | 17.9 | | | | 1.3 |
 
-On one thread the module is a third to a half behind libvpx on the video
-and the walk, in half more instructions (302 M a frame for 187 on the 4K
-video), where on the flood it is level. Four threads hide it: the module is
-ahead or level on the video at every size, 14.9 ms a 4K frame, and behind
-only on the browser at 4K and on uncover, whose mean is its first frames.
+libvpx's own transforms are 6.7 M cycles of the 4K video frame, 4.3 of the
+walk's and 1.2 of the browser's, its intra prediction 3.1, 3.8 and 6.1. A 4K
+video frame has about 100,000 transform blocks: 72,000 4×4 DCTs, 41,000 of
+them a DC alone, 5,000 4×4 ADSTs, 22,000 8×8 DCTs, 13,000 of them a DC
+alone, and some 500 of 16×16; the module's transforms are some 140 cycles a
+block, libvpx's 67.
 
-Profiled as the module under Node on one thread
-(`node --perf-basic-prof`), shares of the cycles:
+The transforms were then timed alone, replaying the 3,000,000 transform
+blocks the native decoder met in the 4K video's first frames through
+`inverse_add` as `residual` calls it, in a module of the transforms alone
+under Node (`tmp/itx`), cycles a block of each kind, before and after the
+8- and 16-point transforms went into vectors, a DCT short enough for its
+top-left 4×4 or 8×8 alone, and the DC alone as a saturating add of bytes:
 
-| function | video 1920×1080 | video 3840×2160 | walk 3840×2160 | browser 3840×2160 | terminal 3840×2160 |
+| kind | share of the blocks | before | after |
+|---|---|---|---|
+| a DC alone | 52% | 67 | 35 |
+| 4×4 DCT | 28% | 72 | 73 |
+| 4×4 ADST | 10% | 104 | 93 |
+| 8×8 DCT, 86% of them a top-left 4×4 | 7.4% | 295 | 233 |
+| 8×8 ADST | 1.9% | 923 | 428 |
+| 16×16 | 0.6% | 4,649 | 1,218 |
+| every block | | 156 | 97 |
+
+Before, the 16×16s and the 8×8 ADSTs, in plain code, were 2.5% of the blocks
+and a third of the cycles. Each kernel is exact to the plain code over the
+replay and over 1,600,000 random blocks of every kind, their coefficients at
+the ends of 16 bits among them. In the decoder, M cycles a frame on one
+thread and four, before and after:
+
+| | one thread | | four | |
+|---|---|---|---|---|
+| terminal 1440×900 | 6.2 | 6.3 | 7.9 | 8.0 |
+| video 1280×800 | 44.1 | 44.0 | 42.3 | 41.8 |
+| video 1920×1080 | 67.3 | 66.9 | 67.8 | 67.6 |
+| video 2560×1600 | 85.6 | 83.7 | 89.4 | 87.2 |
+| video 3840×2160 | 141.3 | 137.2 | 146.7 | 142.3 |
+| flood 1920×1080 | 570.9 | 574.7 | 583.1 | 588.9 |
+
+The terminal has 6,800 transform blocks in its 120 frames, and the flood's,
+nine in ten of them whole 4×4 DCTs, replay faster (109 cycles a block to
+94); counted whole with `perf stat`, each is within its own noise, the flood
+0.2% fewer instructions.
+
+Two changes came of it, checked bit for bit on every sample on one thread
+and four. The row of an inter frame was copied whole from the LAST
+reference before its blocks were made, so that a still block was in place
+already; on a video, whose every block is predicted again, that was 25 MB a
+4K frame copied for nothing. A 64×64 block is now copied only where a still
+block of it keeps the samples, decided once its row is parsed. And the
+vector sub-sample filters keep the rows the next output row shares in lanes
+rather than write an intermediate and load eight rows again. M cycles a
+frame, one thread and four, the base, the copy alone and both:
+
+| | one thread | | | four | | |
+|---|---|---|---|---|---|---|
+| terminal 1440×900 | 6.2 | 5.9 | 6.0 | 8.3 | 7.8 | 8.5 |
+| terminal 3840×2160 | 10.2 | 10.4 | 10.2 | 12.1 | 12.4 | 12.2 |
+| video 1920×1080 | 67.3 | 67.7 | 67.3 | 68.2 | 68.9 | 68.0 |
+| video 3840×2160 | 149.8 | 146.8 | 144.4 | 152.4 | 148.2 | 145.9 |
+| walk 3840×2160 | 119.2 | 116.6 | 114.1 | 120.5 | 117.5 | 114.7 |
+| browser 3840×2160 | 114.6 | 109.1 | 107.6 | 127.4 | 117.7 | 118.6 |
+| drag 3840×2160 | 38.2 | 36.8 | 37.3 | 43.3 | 39.9 | 39.8 |
+| uncover 1920×1080 | 25.4 | 25.7 | 26.0 | 23.8 | 23.8 | 24.0 |
+
+The filters gain less than the intermediate's loads would suggest: on x86 a
+load widened from memory is one instruction, as the move of a register is,
+so the sixteen multiplies and sixteen adds of a row of eight samples are
+the filter whichever way its rows arrive.
+
+What `screen-vp9` chooses, on the video. Its rule, four tile columns
+without the loop filter from 2048 wide and two or fewer with it below, was
+settled on what the remotex gateway wrote and on the flood of a Windows
+terminal, which paid 12% to 16% of its bytes for two columns more; the
+video does not. The first 120 frames of the video captures at 1440×900,
+1920×1080 and 2560×1600, the frames of the benchmark's samples, coded again
+by libvpx as `screen-vp9` 0.0.18 codes them on four threads, the columns
+and the filter forced in a copy of it; the luma PSNR against the capture,
+and M cycles a frame on one thread and mean ms on four, module and libvpx:
+
+| | MB | luma dB | M cycles, one thread | ms on four, module | libvpx |
 |---|---|---|---|---|---|
-| the loop filter | 24% | none coded | none coded | none coded | none coded |
-| `convolve::simd128::both`, at 8, 16 and 32 wide | 10% | 22% | 22% | 3% | |
-| `convolve::predict` | 6% | 6% | 8% | 14% | |
-| `decode_coefs`, with `large_token` | 21% | 21% | 15% | 16% | 6% |
-| `tokens` | 8% | 9% | 7% | 2% | |
-| `Recon::block`, with `residual` | 5% | 9% | 11% | 13% | 8% |
-| `Tile::block` | 4% | 5% | 6% | 12% | 31% |
-| `inverse_add`, with `add_8x8` and `idct16` | 4% | 7% | 6% | 1% | |
-| `BoolDecoder::tree` | 2% | 4% | 4% | 6% | 3% |
-| `find_mv_refs` | 1% | 1% | 2% | 6% | |
+| 1440×900, two columns, filter on (now) | 5.13 | 49.05 | 51.6 | 6.12 | 6.49 |
+| two, off | 5.24 | 48.74 | 39.1 | 5.27 | 4.95 |
+| four, on | 5.13 | 49.05 | 52.1 | 5.95 | 6.11 |
+| four, off | 5.24 | 48.74 | 39.6 | 4.68 | 4.13 |
+| 1920×1080, two columns, filter on (now) | 6.46 | 50.16 | 67.6 | 7.60 | 8.87 |
+| two, off | 6.61 | 49.84 | 48.4 | 6.57 | 6.67 |
+| four, on | 6.47 | 50.16 | 67.5 | 7.25 | 8.13 |
+| four, off | 6.61 | 49.83 | 48.7 | 5.84 | 6.11 |
+| 2560×1600, four columns, filter off (now) | 11.43 | 50.61 | 85.8 | 9.33 | 9.83 |
+| four, on | 11.18 | 51.10 | 121.4 | 12.49 | 13.48 |
+| two, on | 11.17 | 51.10 | 121.4 | 12.99 | 16.54 |
+| two, off | 11.42 | 50.61 | 88.2 | 10.38 | 12.60 |
 
-A video frame is prediction from between the samples before it is tokens:
-28% of the 4K frame and 30% of the walk's are the sub-sample filters and
-the copies, and under 2048 wide the loop filter is a quarter. So what is
-largest now is what the flood made smallest
-([remaining.md](remaining.md)).
+On the video the columns cost 0.1% of the bytes and nothing of the
+picture, and the filter is a quarter of one thread's cycles, 2.1% to 2.3%
+of the bytes and 0.3 dB, 0.5 at 2560×1600. Four columns without the filter
+would make a 1440×900 or 1920×1080 video frame 23% to 24% faster on four
+threads than the two columns with it that `screen-vp9` codes there now, as
+from 2048 wide; what the quiet terminal at those sizes gives for it, a
+light filter left off text at one sample to the pixel, has not been looked
+at ([remaining.md](remaining.md)).

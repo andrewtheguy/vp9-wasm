@@ -269,8 +269,11 @@ blocks it wrote, each frame stamps its blocks with the newest frame of its
 reference chain that did, and a buffer still holding a frame of that chain
 is copied into only where a later frame wrote. A quiet 4K frame, a kilobyte
 that touches three or four of its 2,040 blocks, was 60% that copy; its
-cycles are 44% fewer for it and its median frame four times faster, and a
-busy frame copies the whole row as before. Before 0.0.3, filtering two
+cycles are 44% fewer for it and its median frame four times faster. And a
+64×64 block is copied only where a still block of it keeps the samples, once
+its row is parsed, so a video's frame, whose every block is predicted again,
+copies nothing: 2% to 5% fewer cycles on the 4K video, the walk and the
+browser. Before 0.0.3, filtering two
 edges that lie end to end in one vector and the edge kernels as functions of
 their own were measured and are not done either: those are in
 [docs/tried.md](docs/tried.md). Where a frame's time goes, what threads
@@ -294,7 +297,14 @@ size captured and of the other scenarios, and
 `SAMPLES` names others to decode instead. The script does what a busy host needs: it pins the builds to the same
 cores (`taskset`), alternates them round by round, waits for the load to fall
 before each stream, and prints `perf stat -e instructions:u,cycles:u` beside
-the times, with the medians of three rounds. On a Mac, where the module is
+the times, with the medians of three rounds. A frame's counts and mean time
+are those of the frames after the first: each run is followed by one of the
+first frame alone, which is taken off, since the start of Bun and the
+module's compiling, or of ffmpeg, is 175 to 350 M cycles, as much as 120
+quiet frames, and ffmpeg's the larger. The engine goes on optimising the
+module's functions over the frames after it, which the counts keep: half a
+quiet frame's, a tenth of a video frame's at 1920×1080
+([docs/measurements.md](docs/measurements.md)). On a Mac, where the module is
 what Safari on macOS and iOS runs, it runs the same way unpinned, since macOS
 holds no process to a core, and prints the counts `/usr/bin/time -l` gives,
 user and kernel together; its quiet load is 3, where an idle Mac sits near 2

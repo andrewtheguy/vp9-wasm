@@ -43,62 +43,88 @@ impl<'a> Recon<'a> {
         Recon { f, dc: Box::new(Scratch([0; 1024])), mc: Box::new([0; 80 * 80]), buf: std::ptr::null(), next_coeff: 0, mi_row: 0, mi_col: 0, have_above: false, have_left: false, to_right: 0, to_bottom: 0 }
     }
 
-    /// The row of 64×64 blocks `sb_row` of an inter frame starts as the LAST
-    /// reference's rows, so that a still block from it (`ModeInfo::still`) is
-    /// in place already: one copy of the contiguous bytes, but for the blocks
-    /// the buffer holds those samples at already (`FrameCtx::held`), which
-    /// are left as they are, a screen's quiet frame being nearly all of them.
-    /// Past the frame's right and bottom edges, as far as the last 8×8, the
-    /// samples are the edge's repeated, which is what a block that crosses
-    /// an edge is predicted from (`predict_inter_block`) and what the blocks
-    /// after it and the loop filter read there; those are written whether
-    /// the block was copied or held, since a held block's are the edge of
-    /// some frame before.
+    /// The 64×64 blocks `cols` of the row `sb_row` of an inter frame, once
+    /// parsed, start as the LAST reference's where a still block of them
+    /// (`ModeInfo::still`) is to keep those samples: one copy of the
+    /// contiguous bytes, but for the blocks the buffer holds those samples at
+    /// already (`FrameCtx::held`), which are left as they are, a screen's
+    /// quiet frame being nearly all of them. A 64×64 block with no still
+    /// block is written whole by its blocks and is not copied, which is every
+    /// block of a video's frame. Past the frame's right and bottom edges, as
+    /// far as the last 8×8, the samples of a block with a still block are the
+    /// edge's repeated, which is what libvpx's reference has there once its
+    /// borders are extended and what the loop filter reads; those are written
+    /// whether the block was copied or held, since a held block's are the
+    /// edge of some frame before.
     ///
     /// # Safety
-    /// Nothing has written the row yet, and no other thread touches it.
-    pub unsafe fn start_row(&self, sb_row: usize) {
+    /// Nothing has written those blocks yet, and no other thread touches them.
+    pub unsafe fn start_row(&self, sb_row: usize, cols: std::ops::Range<usize>) {
         let f = self.f;
         let (stride, w, h) = (f.stride, f.width, f.height);
-        let (cols, rows) = (f.mi_cols * 8, f.mi_rows * 8);
+        let (mi_cols, mi_rows) = (f.mi_cols, f.mi_rows);
         let y0 = sb_row * 64;
         // The row has an 8×8 inside the frame, so it starts above the edge.
         let y1 = (y0 + 64).min(h);
         let held = &f.held[sb_row * f.sb_cols..(sb_row + 1) * f.sb_cols];
-        for plane in 0..3 {
-            let (src, dst) = (f.refs[0][plane], f.cur[plane]);
-            // SAFETY: the planes are whole rows of 64×64 blocks, and the
-            // reference is of the frame's size.
-            unsafe {
-                // Each run of blocks not held, in one copy where it is the
-                // whole row and line by line otherwise.
-                let mut c = 0;
-                while c < f.sb_cols {
-                    if held[c] {
-                        c += 1;
-                        continue;
-                    }
-                    let from = c;
-                    while c < f.sb_cols && !held[c] {
-                        c += 1;
-                    }
-                    let (x, len) = (from * 64, (c - from) * 64);
-                    if len == stride {
-                        std::ptr::copy_nonoverlapping(src.add(y0 * stride), dst.add(y0 * stride), (y1 - y0) * stride);
-                    } else {
-                        for y in y0..y1 {
-                            std::ptr::copy_nonoverlapping(src.add(y * stride + x), dst.add(y * stride + x), len);
+        // A held block inside the frame is as it is whatever its blocks are,
+        // and the modes are looked at only where there is a copy or an edge
+        // to make, which on a quiet frame is the edge alone.
+        let inside = (sb_row + 1) * 64 <= h;
+        let keeps = |c: usize| {
+            if held[c] && inside && (c + 1) * 64 <= w {
+                return false;
+            }
+            (sb_row * 8..(sb_row * 8 + 8).min(mi_rows)).any(|r| {
+                // SAFETY: inside the frame, and parsed.
+                (c * 8..(c * 8 + 8).min(mi_cols)).any(|m| unsafe { &*f.mi.add(r * mi_cols + m) }.still())
+            })
+        };
+        let mut c = cols.start;
+        while c < cols.end {
+            if !keeps(c) {
+                c += 1;
+                continue;
+            }
+            // A run of blocks with still blocks, and the part of it to copy.
+            let from = c;
+            while c < cols.end && keeps(c) {
+                c += 1;
+            }
+            for plane in 0..3 {
+                let (src, dst) = (f.refs[0][plane], f.cur[plane]);
+                // SAFETY: the planes are whole rows of 64×64 blocks, and the
+                // reference is of the frame's size.
+                unsafe {
+                    let mut b = from;
+                    while b < c {
+                        if held[b] {
+                            b += 1;
+                            continue;
+                        }
+                        let start = b;
+                        while b < c && !held[b] {
+                            b += 1;
+                        }
+                        let (x, len) = (start * 64, (b - start) * 64);
+                        if len == stride {
+                            std::ptr::copy_nonoverlapping(src.add(y0 * stride), dst.add(y0 * stride), (y1 - y0) * stride);
+                        } else {
+                            for y in y0..y1 {
+                                std::ptr::copy_nonoverlapping(src.add(y * stride + x), dst.add(y * stride + x), len);
+                            }
                         }
                     }
-                }
-                if w < cols {
-                    for y in y0..y1 {
-                        let line = dst.add(y * stride);
-                        std::ptr::write_bytes(line.add(w), *line.add(w - 1), cols - w);
+                    let (x, end) = (from * 64, (c * 64).min(mi_cols * 8));
+                    if w < end {
+                        for y in y0..y1 {
+                            let line = dst.add(y * stride);
+                            std::ptr::write_bytes(line.add(w), *line.add(w - 1), end - w);
+                        }
                     }
-                }
-                for y in h..(y0 + 64).min(rows) {
-                    std::ptr::copy_nonoverlapping(dst.add((h - 1) * stride), dst.add(y * stride), cols);
+                    for y in h..(y0 + 64).min(mi_rows * 8) {
+                        std::ptr::copy_nonoverlapping(dst.add((h - 1) * stride + x), dst.add(y * stride + x), end - x);
+                    }
                 }
             }
         }
@@ -159,7 +185,7 @@ impl<'a> Recon<'a> {
 
     fn block(&mut self, mi: &ModeInfo, mi_row: usize, mi_col: usize, tile_start: usize) {
         if mi.still() {
-            // The samples its row started as (`start_row`), and no residual.
+            // The samples its block started as (`start_row`), and no residual.
             return;
         }
         let f = self.f;
@@ -276,9 +302,7 @@ impl<'a> Recon<'a> {
             if eob == 1 {
                 let Some(&dc) = buf.coeffs.get(self.next_coeff) else { return };
                 self.next_coeff += 1;
-                block[0] = dc;
-                itx::inverse_add(tx, tx_type, lossless, &block[..n * n], 1, dst, stride);
-                block[0] = 0;
+                itx::add_first(tx, tx_type, lossless, dc, dst, stride);
             } else if tx == 0 {
                 // A 4×4 is left whole, as the transform takes it.
                 let Some(whole) = buf.coeffs.get(self.next_coeff..self.next_coeff + 16) else { return };

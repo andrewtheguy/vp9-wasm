@@ -10,9 +10,8 @@
 //! saturating narrow clips to 8 bits.
 
 use core::arch::wasm32::*;
-use core::mem::MaybeUninit;
 
-use super::{BEFORE, EXTRA};
+use super::BEFORE;
 
 /// The rounding, less the 128·128 that keeps a sum inside a signed lane.
 const BIAS: i16 = 64 - 128 * 128;
@@ -85,6 +84,22 @@ pub unsafe fn horiz<const W: usize>(
     unsafe { filter::<W>(src.sub(BEFORE), src_stride, dst, dst_stride, f, 1, h) }
 }
 
+/// `h` rows of `W` samples down, eight at a time: each from the eight rows
+/// `row` gives a column of lanes for, of which the seven the next output row
+/// shares are kept rather than made again.
+#[inline(always)]
+unsafe fn down<const W: usize>(row: impl Fn(usize, usize) -> v128, dst: *mut u8, dst_stride: usize, f: &[i16; 8], h: usize) {
+    let taps = f.map(|tap| i16x8_splat(tap));
+    for x in (0..W).step_by(8) {
+        let mut window = [row(0, x), row(1, x), row(2, x), row(3, x), row(4, x), row(5, x), row(6, x), i16x8_splat(0)];
+        for y in 0..h {
+            window[7] = row(y + 7, x);
+            unsafe { store::<W>(dst.add(y * dst_stride + x), sums(|k| window[k], &taps)) };
+            window = [window[1], window[2], window[3], window[4], window[5], window[6], window[7], window[7]];
+        }
+    }
+}
+
 /// `vpx_convolve8_vert`.
 pub unsafe fn vert<const W: usize>(
     src: *const u8,
@@ -94,11 +109,13 @@ pub unsafe fn vert<const W: usize>(
     f: &[i16; 8],
     h: usize,
 ) {
-    unsafe { filter::<W>(src.sub(BEFORE * src_stride), src_stride, dst, dst_stride, f, src_stride, h) }
+    let src = unsafe { src.sub(BEFORE * src_stride) };
+    unsafe { down::<W>(|r, x| lanes::<W>(src.add(r * src_stride + x)), dst, dst_stride, f, h) }
 }
 
-/// `vpx_convolve8`: across into an intermediate of 8-bit samples, then down
-/// from it. `h` is at most 64.
+/// `vpx_convolve8`: across, each row rounded and clipped to 8 bits as
+/// libvpx's intermediate is, then down from those rows, which are kept in
+/// lanes and not written out. `h` is at most 64.
 pub unsafe fn both<const W: usize>(
     src: *const u8,
     src_stride: usize,
@@ -108,10 +125,12 @@ pub unsafe fn both<const W: usize>(
     fy: &[i16; 8],
     h: usize,
 ) {
-    let mut temp = [MaybeUninit::<u8>::uninit(); 64 * (64 + EXTRA)];
-    let temp = temp.as_mut_ptr() as *mut u8;
-    unsafe {
-        horiz::<W>(src.sub(BEFORE * src_stride), src_stride, temp, 64, fx, h + EXTRA);
-        vert::<W>(temp.add(BEFORE * 64), 64, dst, dst_stride, fy, h);
-    }
+    let taps = fx.map(|tap| i16x8_splat(tap));
+    let src = unsafe { src.sub(BEFORE * src_stride + BEFORE) };
+    let across = |r: usize, x: usize| {
+        let from = unsafe { src.add(r * src_stride + x) };
+        let s = sums(|k| unsafe { lanes::<W>(from.add(k)) }, &taps);
+        u16x8_extend_low_u8x16(u8x16_narrow_i16x8(s, s))
+    };
+    unsafe { down::<W>(across, dst, dst_stride, fy, h) }
 }
