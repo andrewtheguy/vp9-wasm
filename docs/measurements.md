@@ -397,3 +397,22 @@ makes no such copy and predicts a still block by `vpx_convolve_copy`, 10 M of
 its frame. Under 2048 wide the loop filter is 6 M more of the 22. On the
 browser, a page scrolled, it is the modes, 8 M more, and not the
 prediction.
+
+The threads, on the video, the walk and the browser: mean milliseconds a
+frame after the first, module and libvpx, one thread and four as above,
+two to four on four cores and five and six on six:
+
+| | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| video 1280×800, one column | 13.8, 8.2 | 7.4, 8.2 | 7.0, 8.5 | 6.9, 7.6 | 7.7, 7.7 | 8.1, 7.6 |
+| video 1920×1080, two | 21.3, 14.2 | 12.1, 10.1 | 9.2, 9.8 | 7.5, 8.9 | 7.4, 8.8 | 7.8, 9.0 |
+| video 2560×1600, four | 27.9, 20.5 | 15.7, 13.7 | 11.8, 13.8 | 9.3, 9.8 | 9.8, 9.9 | 10.7, 10.0 |
+| video 3840×2160, four | 46.1, 33.8 | 26.4, 22.3 | 18.9, 22.1 | 14.9, 16.2 | 14.8, 16.9 | 15.6, 16.7 |
+| walk 3840×2160, four | 37.7, 25.6 | 20.9, 16.8 | 13.9, 15.1 | 12.2, 12.4 | 12.1, 12.6 | 12.4, 12.8 |
+| browser 3840×2160, four | 34.7, 25.9 | 20.8, 16.6 | 15.1, 13.6 | 12.7, 10.3 | 11.1, 10.3 | 11.4, 10.2 |
+
+What the flood said of the threads holds of the video: the module gains up
+to four and nothing past them, but on the browser, 12% at five, so the
+measurements stay at four. With one column its pool still makes the frame
+twice as fast, filtering and reconstructing beside the parsing, where
+libvpx's gains are its loop filter's thread alone.
