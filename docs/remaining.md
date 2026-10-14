@@ -87,6 +87,13 @@ work would go:
 - **Eight threads.** remotex starts a pool of up to eight. Five and six on
   six cores gain nothing on the video and the walk and 12% on the browser at
   4K; eight on eight have not been run.
+- **Four columns without the filter from 1440 wide.** On the video they
+  would make a frame at 1440×900 or 1920×1080 23% to 24% faster on four
+  threads for 2.1% to 2.3% of the bytes and 0.3 dB
+  ([measurements.md](measurements.md)); the columns no longer cost what the
+  flood of a Windows terminal paid for them, which is a reference and no
+  target. It is `screen-vp9`'s to choose, once the text of a quiet terminal
+  without the filter has been looked at.
 - **The picture without the loop filter, by eye.** It is 0.3 to 0.9 dB by
   PSNR. A desktop of 2048 wide or more at one sample to the pixel, where
   an edge left unsmoothed is largest on the screen, has not been looked at.

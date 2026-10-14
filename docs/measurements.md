@@ -462,3 +462,37 @@ The filters gain less than the intermediate's loads would suggest: on x86 a
 load widened from memory is one instruction, as the move of a register is,
 so the sixteen multiplies and sixteen adds of a row of eight samples are
 the filter whichever way its rows arrive.
+
+What `screen-vp9` chooses, on the video. Its rule, four tile columns
+without the loop filter from 2048 wide and two or fewer with it below, was
+settled on what the remotex gateway wrote and on the flood of a Windows
+terminal, which paid 12% to 16% of its bytes for two columns more; the
+video does not. The first 120 frames of the video captures at 1440×900,
+1920×1080 and 2560×1600, the frames of the benchmark's samples, coded again
+by libvpx as `screen-vp9` 0.0.18 codes them on four threads, the columns
+and the filter forced in a copy of it; the luma PSNR against the capture,
+and M cycles a frame on one thread and mean ms on four, module and libvpx:
+
+| | MB | luma dB | M cycles, one thread | ms on four, module | libvpx |
+|---|---|---|---|---|---|
+| 1440×900, two columns, filter on (now) | 5.13 | 49.05 | 51.6 | 6.12 | 6.49 |
+| two, off | 5.24 | 48.74 | 39.1 | 5.27 | 4.95 |
+| four, on | 5.13 | 49.05 | 52.1 | 5.95 | 6.11 |
+| four, off | 5.24 | 48.74 | 39.6 | 4.68 | 4.13 |
+| 1920×1080, two columns, filter on (now) | 6.46 | 50.16 | 67.6 | 7.60 | 8.87 |
+| two, off | 6.61 | 49.84 | 48.4 | 6.57 | 6.67 |
+| four, on | 6.47 | 50.16 | 67.5 | 7.25 | 8.13 |
+| four, off | 6.61 | 49.83 | 48.7 | 5.84 | 6.11 |
+| 2560×1600, four columns, filter off (now) | 11.43 | 50.61 | 85.8 | 9.33 | 9.83 |
+| four, on | 11.18 | 51.10 | 121.4 | 12.49 | 13.48 |
+| two, on | 11.17 | 51.10 | 121.4 | 12.99 | 16.54 |
+| two, off | 11.42 | 50.61 | 88.2 | 10.38 | 12.60 |
+
+On the video the columns cost 0.1% of the bytes and nothing of the
+picture, and the filter is a quarter of one thread's cycles, 2.1% to 2.3%
+of the bytes and 0.3 dB, 0.5 at 2560×1600. Four columns without the filter
+would make a 1440×900 or 1920×1080 video frame 23% to 24% faster on four
+threads than the two columns with it that `screen-vp9` codes there now, as
+from 2048 wide; what the quiet terminal at those sizes gives for it, a
+light filter left off text at one sample to the pixel, has not been looked
+at ([remaining.md](remaining.md)).
