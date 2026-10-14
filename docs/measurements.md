@@ -644,3 +644,64 @@ ones alone 0.8%, both 2.7%. Loads blocked on a store not yet written
 one wrote, were 25 M over the video's 120 frames before and 8 M after, where
 libvpx's are 6 M; the horizontal pairs alone take them off as well, so they
 were not what the frame waited on.
+
+## On the target: an M2 Max against libvpx
+
+The module of 0.0.11 on an M2 Max (eight performance cores and four
+efficiency ones, macOS 26.7.1) under Bun 1.4.2, whose JavaScriptCore is
+Safari's, and Node 24.10, whose V8 is Chrome's, against ffmpeg's libvpx
+1.16.0 as Homebrew builds it, which on the M2 runs its NEON kernels and,
+for prediction, its `i8mm` ones, whose dot products of bytes WebAssembly
+has no equal of. `bench/run.sh`, five rounds on a Mac in use, M cycles a
+frame on one thread and mean ms on four, module under Bun and Node and
+libvpx:
+
+| | M cycles, Bun | Node | libvpx | ms on four, Bun | Node | libvpx |
+|---|---|---|---|---|---|---|
+| terminal 1440×900 | 3.2 | 1.9 | 1.1 | 0.25 | 0.23 | 0.24 |
+| video 1280×800 | 19.8 | 18.1 | 14.1 | 2.97 | 3.09 | 3.53 |
+| video 1920×1080 | 30.5 | 28.7 | 23.2 | 2.83 | 3.04 | 3.94 |
+| video 2560×1600, no filter | 42.0 | 40.0 | 34.7 | 3.79 | 3.99 | 4.77 |
+| video 3840×2160, no filter | 68.1 | 65.5 | 56.7 | 5.94 | 6.11 | 7.95 |
+| walk 3840×2160, no filter | 51.7 | 49.5 | 41.0 | 4.67 | 4.70 | 5.76 |
+| browser 3840×2160, no filter | 51.2 | 55.1 | 41.7 | 4.60 | 5.18 | 4.57 |
+| flood 1920×1080 | 348 | 381 | 360 | 45.5 | 50.8 | 53.7 |
+
+On one thread the module takes a sixth to two fifths more cycles than
+libvpx on the video, the walk and the browser, a little more under Bun than
+under Node but on the browser, where Node takes 8% more than Bun; on the
+flood it is level. The terminal's are the engine still starting, as the
+scenarios above found on x86. On four threads the module is faster than
+libvpx on every video and the walk, by a sixth to a quarter, level on the
+browser under Bun and an eighth behind under Node.
+
+What each part costs, the module's as the cycles a frame a build saves
+that leaves the part out, on one thread, Bun and Node, and libvpx's as its
+share of the decoding thread's samples under macOS's `sample` times its
+cycles above, the libvpx of Homebrew keeping the names of its functions.
+Leaving a part out of a filtered stream changes what the loop filter does,
+so the transforms and prediction at 1920×1080 are near and not exact; the
+unfiltered 4K samples give the clean numbers. libvpx's prediction takes in
+its copy of a still block, which is the module's row copy; M cycles a
+frame, module under Bun and Node, then libvpx:
+
+| | video 1920×1080 | video 3840×2160 | walk 3840×2160 | browser 3840×2160 |
+|---|---|---|---|---|
+| prediction from the reference | 4.3, 3.5; 2.6 | 17.5, 14.4; 12.4 | 14.9, 12.5; 11.6 | 11.1, 11.4; 8.3 |
+| the row copy | 0.3, 0.3 | 0.7, 1.0 | 1.1, 1.4 | 1.0, 1.2 |
+| the loop filter | 6.8, 6.6; 4.9 | | | |
+| the transforms | 3.8, 3.3; 0.7 | 3.4, 2.5; 2.0 | 2.5, 1.9; 1.2 | 0.5, 0.6; 0.3 |
+| intra prediction | 0.6, 0.2; 0.2 | 2.4, 1.9; 1.3 | 3.0, 2.6; 1.7 | 4.5, 4.6; 2.8 |
+| libvpx's tokens | 11.3 | 26.5 | 16.2 | 13.8 |
+| libvpx's modes | 3.1 | 9.6 | 9.2 | 13.0 |
+
+So on the target the most the module takes more is its prediction from the
+reference and the copy beside it: 3 to 6 M cycles of a 4K video frame, 2
+to 4 of the walk's and the browser's, and 3 M more under Bun than under
+Node on the video, where the same module's kernels are compiled by the two
+engines for the same ARM. Then what the parts measured leave of the gap,
+which is the tokens and the modes, which no build can leave out: on the 4K
+video 3 M under Bun and 5 under Node, on the browser 4 under Bun and 7
+under Node. Then the loop filter under 2048 wide, 1.8 M more than libvpx's
+at 1920×1080; intra prediction, 1.1 to 1.8 M more at 4K; and the
+transforms, 0.5 to 1.4.
