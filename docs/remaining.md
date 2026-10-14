@@ -7,29 +7,46 @@ and found no faster in [tried.md](tried.md).
 
 ## Speed
 
-A busy frame, where a decoder falls behind, is two thirds token parsing,
-and there the module is within a twentieth of libvpx's cycles: both sit on
-the boolean decoder's chain, which no layout of the loop shortens. So
-nothing below is large. In the order the work would go:
+Judged on the terminal and the video of wlshare's captures and on its other
+scenarios, as `screen-vp9` 0.0.18 codes them
+([measurements.md](measurements.md)); the flood of text is the worst case a
+desktop can be, measured for reference and no target. On one thread the
+module takes a third to a half more cycles a frame than libvpx on the video
+and the walk, a quarter more on the browser, and is level only on the flood,
+which is token parsing. On four threads it is ahead of libvpx or level
+everywhere but the browser at 4K, 13.6 ms a frame for 10.8, and uncover,
+whose mean is its first frames. In the order the work would go:
 
-- **The loop filter's masks settled as the blocks are parsed**, as
-  hevc-wasm's boundary strengths are, instead of the scan of a 64×64
-  block's modes at filter time. The masks and their walk are 2% to 3% of a
-  quiet frame, and only of a stream that has the filter, which from
-  `screen-vp9` 0.0.10 is one under 2048 wide.
-- **The token's probability by a table of offsets.** It is found at
-  `probs[band][ctx]` by a multiply by 18 that a table of the 36 triples'
-  offsets would make a shift. It rides beside the boolean's chain, not on
-  it.
-- **`ModeInfo` smaller.** The context fills of a few bytes are whole words
-  now, as hevc-wasm writes them, and the parse of a 64×64 block in the
-  inactive segment is mostly the 34-byte `ModeInfo` written to its 64 cells:
-  2 KB a block, 4 MB a 4K frame, half of the parser's block function in a
-  native line profile of the quiet 4K sample, where that function is a third
-  of the frame. Only a block under 8×8 has four motion vectors and four
-  modes, and those could live in a table of their own by cell, `mv` is
-  always `sub_mv[3]` and `mode` always `sub_mode[3]`, so the record could be
-  16 bytes.
+- **Sub-sample prediction.** 28% of a 4K video frame and 30% of the walk's,
+  16% at 1920×1080: `convolve::simd128::both` at 16 wide is the largest
+  function of both 4K samples, 17%, and `convolve::predict`, the
+  whole-sample copies and the dispatch, 6% to 8%, 14% on the browser. Not
+  yet known: how much of the module's half more instructions than libvpx is
+  here, and how much of that is libvpx's AVX2, which 128-bit vectors cannot
+  follow.
+- **The loop filter, under 2048 wide.** 24% of a 1920×1080 video frame, its
+  largest function. What was tried on the kernels
+  ([tried.md](tried.md)) was measured on the earlier captures and not on a
+  video; libvpx's `ss00` path is untried. The masks settled as the blocks
+  are parsed, as hevc-wasm's boundary strengths are, remain the smaller
+  part.
+- **`ModeInfo` smaller, and the block's walk.** `Tile::block` is 31% of a
+  quiet 4K frame, 12% of the browser's and 5% of the video's, and
+  `Recon::block` 13% of the browser's, 4% to 9% of the video's and the
+  walk's. The parse of a 64×64 block in the inactive segment is mostly the
+  34-byte `ModeInfo` written to its 64 cells: 2 KB a block, 4 MB a 4K
+  frame. Only a block under 8×8 has four motion vectors and four modes, and
+  those could live in a table of their own by cell, `mv` is always
+  `sub_mv[3]` and `mode` always `sub_mode[3]`, so the record could be 16
+  bytes.
+- **The motion vectors' candidates and the mode trees** on a page scrolled:
+  `find_mv_refs` and `BoolDecoder::tree` are 6% each of the browser's 4K
+  frame, 1% to 4% elsewhere.
+- **Token parsing** is 29% to 30% of a video frame and 22% of the walk's,
+  where it is two thirds of the flood's. Both decoders sit on the boolean's
+  chain there, which no layout of the loop shortens, so this is where the
+  module is level already. The token's probability by a table of offsets
+  was no faster on an M2 ([tried.md](tried.md)).
 - **The damage to the painter.** What changed reaches the decoder, as the
   active map, and stops there: the page uploads all three planes of every
   picture to WebGL, 25 MB at 4K for a frame of a kilobyte. The decoder now
@@ -37,13 +54,12 @@ nothing below is large. In the order the work would go:
   say so, as a rectangle or as the rows of blocks, and remotex's paint worker
   upload only that with `texSubImage2D`, or nothing when nothing changed.
   Likely worth more on an iPad than the decode of such a frame now costs.
-- **The transforms in plain code**: the ADST at 8 and 16 and the DCT at 16
-  and 32. A quiet desktop has 184 8×8 ADST blocks a frame, 0.4% of its
-  instructions; a busy frame's have not been counted. An exact port needs
-  32-bit lanes for the ADST, whose stages libvpx's C keeps at 32 bits.
+- **The transforms**, `inverse_add` and what it calls, are 4% to 7% of a
+  video frame and 1% of the browser's. The ADST at 8 and 16 and the DCT at
+  16 and 32 are in plain code; an exact port needs 32-bit lanes for the
+  ADST, whose stages libvpx's C keeps at 32 bits.
 - **Intra prediction in plain code**, and the scatter of the coefficients
-  of a transform block larger than 4×4. Intra blocks are 0.6% to 6% of the
-  area.
+  of a transform block larger than 4×4. Not counted on these samples.
 
 ## Not measured
 
@@ -57,6 +73,9 @@ nothing below is large. In the order the work would go:
   rest; nothing uses `bitmask`. Not measured: iOS, whose Safari may give a
   shared memory bounds checks, and its two performance cores beside four
   efficiency ones, onto which the thread that parses may be put.
+- **The video on Apple silicon, and the threads on it.** What the M2 above
+  and the table of threads in [measurements.md](measurements.md) say is of
+  the flood; neither has been run on the video.
 - **Eight threads.** remotex starts a pool of up to eight. Six on six cores
   gain a tenth on one busy sample and lose on the rest; eight on eight have
   not been run.

@@ -14,7 +14,10 @@ a Mac screen recording, called the desktop, the Mac, the shader and the
 recording. The later ones are from what the remotex gateway wrote on
 2026-10-08 and the 120-frame samples of `bench/samples.sh` cut from it.
 The latest, on the buffers held, are from wlshare's captures of 2026-10-09
-and the samples cut from those as `screen-vp9` 0.0.12 codes them.
+and the samples cut from those as `screen-vp9` 0.0.12 codes them. The
+last section is what a change is judged on now: the scenarios of wlshare's
+captures of 2026-10-13, as `screen-vp9` 0.0.18 codes them. The busy samples
+of every section before it are a flood of text, the worst case.
 
 ## Where the time goes
 
@@ -297,4 +300,67 @@ at 3840×2160, libvpx taking 1.9, 2.7, 2.6 and 4.6; the four-thread frame
 is now mostly the pool's hand-off and the parse of one tile column. What
 is left of a quiet frame on one thread is `Tile::block`, half of it the
 34-byte `ModeInfo` written to the 64 cells of each inactive 64×64 block
+([remaining.md](remaining.md)).
+
+## The scenarios, on what `screen-vp9` 0.0.18 codes
+
+The samples of 2026-10-14 are cut from wlshare's captures of 2026-10-13,
+eight scenarios at the ten sizes, and are named for the capture each is cut
+from. A change is judged on the terminal, which is the quiet desktop, and on
+the video, a clip played full screen, which is the busy one; the flood of
+coloured text that was the busy sample until now changes nearly every pixel
+of every frame, which a desktop almost never does, and is measured for
+reference. What was concluded from it above, that a busy frame is two
+thirds token parsing and the module within a twentieth of libvpx, is true of
+the flood and of nothing else here.
+
+120 frames of each, 50 of uncover, the medians of three rounds
+(`bench/run.sh`); libvpx's milliseconds are its mean, the one number ffmpeg
+gives, and the module's the mean beside it:
+
+| | M cycles a frame, one thread | | | mean ms a frame, four threads | |
+|---|---|---|---|---|---|
+| | module | libvpx | | module | libvpx |
+| terminal 1440×900, two columns, filtered | 7.5 | 4.9 | +53% | 1.84 | 1.93 |
+| terminal 3840×2160, four, unfiltered | 12.3 | 23.9 | −49% | 3.75 | 4.54 |
+| video 1280×800, one, filtered | 43.7 | 28.2 | +55% | 7.15 | 7.53 |
+| video 1920×1080, two, filtered | 68.1 | 47.0 | +45% | 7.62 | 8.82 |
+| video 2560×1600, four, unfiltered | 89.4 | 67.2 | +33% | 9.39 | 10.38 |
+| video 3840×2160, four, unfiltered | 147.7 | 108.6 | +36% | 14.88 | 16.74 |
+| walk 1920×1080 | 54.1 | 35.5 | +52% | 6.33 | 6.75 |
+| walk 3840×2160 | 116.7 | 81.9 | +42% | 12.50 | 12.76 |
+| browser 1920×1080 | 42.4 | 34.3 | +24% | 5.30 | 6.57 |
+| browser 3840×2160 | 114.0 | 88.6 | +29% | 13.55 | 10.81 |
+| drag 1920×1080 | 23.8 | 17.1 | +39% | 3.83 | 4.40 |
+| drag 3840×2160 | 42.4 | 42.0 | +1% | 6.63 | 6.88 |
+| uncover 1920×1080 | 37.4 | 21.9 | +71% | 5.27 | 4.20 |
+| uncover 3840×2160 | 68.9 | 59.2 | +16% | 10.06 | 8.98 |
+| flood 1920×1080, for reference | 577.0 | 563.6 | +2% | 77.00 | 89.25 |
+
+On one thread the module is a third to a half behind libvpx on the video
+and the walk, in half more instructions (302 M a frame for 187 on the 4K
+video), where on the flood it is level. Four threads hide it: the module is
+ahead or level on the video at every size, 14.9 ms a 4K frame, and behind
+only on the browser at 4K and on uncover, whose mean is its first frames.
+
+Profiled as the module under Node on one thread
+(`node --perf-basic-prof`), shares of the cycles:
+
+| function | video 1920×1080 | video 3840×2160 | walk 3840×2160 | browser 3840×2160 | terminal 3840×2160 |
+|---|---|---|---|---|---|
+| the loop filter | 24% | none coded | none coded | none coded | none coded |
+| `convolve::simd128::both`, at 8, 16 and 32 wide | 10% | 22% | 22% | 3% | |
+| `convolve::predict` | 6% | 6% | 8% | 14% | |
+| `decode_coefs`, with `large_token` | 21% | 21% | 15% | 16% | 6% |
+| `tokens` | 8% | 9% | 7% | 2% | |
+| `Recon::block`, with `residual` | 5% | 9% | 11% | 13% | 8% |
+| `Tile::block` | 4% | 5% | 6% | 12% | 31% |
+| `inverse_add`, with `add_8x8` and `idct16` | 4% | 7% | 6% | 1% | |
+| `BoolDecoder::tree` | 2% | 4% | 4% | 6% | 3% |
+| `find_mv_refs` | 1% | 1% | 2% | 6% | |
+
+A video frame is prediction from between the samples before it is tokens:
+28% of the 4K frame and 30% of the walk's are the sub-sample filters and
+the copies, and under 2048 wide the loop filter is a quarter. So what is
+largest now is what the flood made smallest
 ([remaining.md](remaining.md)).
