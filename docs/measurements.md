@@ -314,53 +314,86 @@ reference. What was concluded from it above, that a busy frame is two
 thirds token parsing and the module within a twentieth of libvpx, is true of
 the flood and of nothing else here.
 
-120 frames of each, 50 of uncover, the medians of three rounds
-(`bench/run.sh`); libvpx's milliseconds are its mean, the one number ffmpeg
-gives, and the module's the mean beside it:
+Release 0.0.9 against ffmpeg's libvpx, 120 frames of each and 50 of
+uncover, the medians of three rounds of `bench/run.sh`, which counts the
+frames after the first: a run of the first frame alone is taken off each
+run, since the start of Bun and the module's compiling, or of ffmpeg, is
+175 to 350 M cycles, ffmpeg's the larger, as much as 120 quiet frames. Counted
+with it, as the first table of this section was, a quiet frame was a third
+of the module's cycles too few against libvpx's. The module's milliseconds
+are its own clock's mean, libvpx's its wall time; the mean of a quiet sample
+is mostly its first frames after the keyframe, its median a quarter of it.
 
-| | M cycles a frame, one thread | | | mean ms a frame, four threads | |
-|---|---|---|---|---|---|
-| | module | libvpx | | module | libvpx |
-| terminal 1440×900, two columns, filtered | 7.5 | 4.9 | +53% | 1.84 | 1.93 |
-| terminal 3840×2160, four, unfiltered | 12.3 | 23.9 | −49% | 3.75 | 4.54 |
-| video 1280×800, one, filtered | 43.7 | 28.2 | +55% | 7.15 | 7.53 |
-| video 1920×1080, two, filtered | 68.1 | 47.0 | +45% | 7.62 | 8.82 |
-| video 2560×1600, four, unfiltered | 89.4 | 67.2 | +33% | 9.39 | 10.38 |
-| video 3840×2160, four, unfiltered | 147.7 | 108.6 | +36% | 14.88 | 16.74 |
-| walk 1920×1080 | 54.1 | 35.5 | +52% | 6.33 | 6.75 |
-| walk 3840×2160 | 116.7 | 81.9 | +42% | 12.50 | 12.76 |
-| browser 1920×1080 | 42.4 | 34.3 | +24% | 5.30 | 6.57 |
-| browser 3840×2160 | 114.0 | 88.6 | +29% | 13.55 | 10.81 |
-| drag 1920×1080 | 23.8 | 17.1 | +39% | 3.83 | 4.40 |
-| drag 3840×2160 | 42.4 | 42.0 | +1% | 6.63 | 6.88 |
-| uncover 1920×1080 | 37.4 | 21.9 | +71% | 5.27 | 4.20 |
-| uncover 3840×2160 | 68.9 | 59.2 | +16% | 10.06 | 8.98 |
-| flood 1920×1080, for reference | 577.0 | 563.6 | +2% | 77.00 | 89.25 |
+| | columns, filter | M cycles, module | libvpx | | mean ms on four, module | libvpx |
+|---|---|---|---|---|---|---|
+| terminal 1280×800 | 1, on | 5.3 | 2.1 | +152% | 1.46 | 1.45 |
+| terminal 1440×900 | 2, on | 6.0 | 2.9 | +107% | 1.27 | 1.74 |
+| terminal 1600×1000 | 2, on | 6.4 | 3.8 | +68% | 1.72 | 2.05 |
+| terminal 1920×1080 | 2, on | 7.2 | 5.0 | +44% | 1.61 | 2.35 |
+| terminal 2048×1536 | 4, off | 6.9 | 7.2 | -4% | 2.01 | 1.64 |
+| terminal 2560×1600 | 4, off | 7.6 | 10.3 | -26% | 2.16 | 2.06 |
+| terminal 2880×1800 | 4, off | 8.7 | 13.4 | -35% | 2.41 | 2.72 |
+| terminal 3200×2000 | 4, off | 9.7 | 16.8 | -42% | 2.46 | 3.16 |
+| terminal 3456×2168 | 4, off | 10.0 | 20.0 | -50% | 2.86 | 4.05 |
+| terminal 3840×2160 | 4, off | 10.2 | 22.2 | -54% | 3.12 | 3.91 |
+| video 1280×800 | 1, on | 43.2 | 26.4 | +64% | 6.90 | 7.58 |
+| video 1440×900 | 2, on | 51.5 | 33.0 | +56% | 6.07 | 6.55 |
+| video 1600×1000 | 2, on | 59.8 | 39.0 | +53% | 6.78 | 7.31 |
+| video 1920×1080 | 2, on | 67.5 | 45.3 | +49% | 7.62 | 8.74 |
+| video 2048×1536 | 4, off | 84.6 | 58.6 | +44% | 8.70 | 8.08 |
+| video 2560×1600 | 4, off | 89.1 | 65.8 | +35% | 9.31 | 9.78 |
+| video 2880×1800 | 4, off | 110.6 | 80.0 | +38% | 11.48 | 11.48 |
+| video 3200×2000 | 4, off | 130.8 | 95.7 | +37% | 13.34 | 14.75 |
+| video 3456×2168 | 4, off | 150.5 | 109.3 | +38% | 14.68 | 16.50 |
+| video 3840×2160 | 4, off | 147.5 | 107.5 | +37% | 14.95 | 16.64 |
+| browser 1920×1080 | 2, on | 37.8 | 30.6 | +24% | 5.29 | 6.29 |
+| browser 3840×2160 | 4, off | 109.5 | 83.2 | +32% | 12.88 | 10.40 |
+| drag 1920×1080 | 2, on | 21.2 | 14.2 | +49% | 3.22 | 4.05 |
+| drag 3840×2160 | 4, off | 37.9 | 37.9 | +0% | 6.04 | 6.20 |
+| uncover 1920×1080 | 2, on | 24.8 | 12.0 | +107% | 4.12 | 3.27 |
+| uncover 3840×2160 | 4, off | 53.7 | 42.9 | +25% | 7.82 | 7.04 |
+| walk 1920×1080 | 2, on | 53.4 | 33.8 | +58% | 6.43 | 6.66 |
+| walk 3840×2160 | 4, off | 117.0 | 80.8 | +45% | 12.00 | 12.35 |
+| flood 1280×800, for reference | 1, on | 267.6 | 256.8 | +4% | 67.91 | 76.61 |
+| flood 1920×1080, for reference | 2, on | 567.8 | 552.7 | +3% | 77.08 | 89.51 |
+| flood 2560×1600, for reference | 4, off | 673.9 | 666.8 | +1% | 62.00 | 61.15 |
+| flood 3840×2160, for reference | 4, off | 1393.1 | 1374.8 | +1% | 122.68 | 124.58 |
 
-On one thread the module is a third to a half behind libvpx on the video
-and the walk, in half more instructions (302 M a frame for 187 on the 4K
-video), where on the flood it is level. Four threads hide it: the module is
-ahead or level on the video at every size, 14.9 ms a 4K frame, and behind
-only on the browser at 4K and on uncover, whose mean is its first frames.
+On one thread the module is a third to two thirds behind libvpx on the
+video and the walk, at every size, and two thirds behind or more on a quiet
+terminal under 2048 wide, where the loop filter is on: 3 M cycles a frame
+more, of 6. From 2048 wide, in four columns without the filter, it takes
+half libvpx's cycles on the terminal. Four threads hide the rest: the module
+is ahead of libvpx or within a tenth everywhere but the browser at 4K, 12.9
+ms a frame for 10.4, and uncover, whose frames each uncover a window anew.
 
-Profiled as the module under Node on one thread
-(`node --perf-basic-prof`), shares of the cycles:
+A picture held while the next frame decodes, as the page holds one while it
+uploads it since 0.0.9, costs nothing: the cycles a frame are the same to
+1% on the terminal, the video, the browser and drag, whether the last
+picture is released before the next frame or after it.
 
-| function | video 1920×1080 | video 3840×2160 | walk 3840×2160 | browser 3840×2160 | terminal 3840×2160 |
-|---|---|---|---|---|---|
-| the loop filter | 24% | none coded | none coded | none coded | none coded |
-| `convolve::simd128::both`, at 8, 16 and 32 wide | 10% | 22% | 22% | 3% | |
-| `convolve::predict` | 6% | 6% | 8% | 14% | |
-| `decode_coefs`, with `large_token` | 21% | 21% | 15% | 16% | 6% |
-| `tokens` | 8% | 9% | 7% | 2% | |
-| `Recon::block`, with `residual` | 5% | 9% | 11% | 13% | 8% |
-| `Tile::block` | 4% | 5% | 6% | 12% | 31% |
-| `inverse_add`, with `add_8x8` and `idct16` | 4% | 7% | 6% | 1% | |
-| `BoolDecoder::tree` | 2% | 4% | 4% | 6% | 3% |
-| `find_mv_refs` | 1% | 1% | 2% | 6% | |
+What libvpx and the module spend a frame on, on one thread: the module
+profiled under Node (`node --perf-basic-prof`), libvpx as `vpxdec` built
+from its 1.16.0 source as Debian configures it, with symbols, whose counts
+are ffmpeg's to 3%. Each function is put with the work it does and its share
+scaled to the cycles above; M cycles a frame, module and libvpx:
 
-A video frame is prediction from between the samples before it is tokens:
-28% of the 4K frame and 30% of the walk's are the sub-sample filters and
-the copies, and under 2048 wide the loop filter is a quarter. So what is
-largest now is what the flood made smallest
-([remaining.md](remaining.md)).
+| | video 1920×1080 | video 3840×2160 | walk 3840×2160 | browser 3840×2160 |
+|---|---|---|---|---|
+| tokens: `decode_coefs`, `tokens`, `large_token`; `decode_coefs`, `vp9_decode_block_tokens` | 19.7, 16.9 | 45.5, 44.5 | 26.5, 24.7 | 19.6, 20.4 |
+| modes: `Tile::block` and the trees; `vp9_read_mode_info` and `decode_block` | 6.8, 6.1 | 19.6, 20.1 | 18.1, 17.3 | 33.1, 24.9 |
+| prediction from the reference: `convolve`; `vpx_convolve*`, `dec_build_inter_predictors_sb` | 11.4, 7.6 | 43.6, 30.6 | 37.3, 28.4 | 22.9, 26.2 |
+| reconstruction: `Recon::block`, `residual`, the transforms, intra prediction | 6.8, 2.7 | 25.6, 9.8 | 21.1, 8.1 | 19.0, 7.3 |
+| the loop filter | 16.7, 11.1 | | | |
+| the rest, mostly the row copy (libc's `memmove`) | 4.2, 0.8 | 10.5, 1.7 | 11.5, 1.9 | 12.7, 3.8 |
+
+Token parsing and the modes, which every earlier section found the frame
+waiting on, are level with libvpx's on the video. The module's 40 M cycles
+more on the 4K video frame are its reconstruction, 16 M, its prediction, 13
+M, and the rest, 9 M, nearly all of it the libc `memmove` behind the row
+copy: every row of an inter frame starts as the last frame's (`start_row`), 25
+MB a 4K frame, where on the video every block is then predicted again. libvpx
+makes no such copy and predicts a still block by `vpx_convolve_copy`, 10 M of
+its frame. Under 2048 wide the loop filter is 6 M more of the 22. On the
+browser, a page scrolled, it is the modes, 8 M more, and not the
+prediction.
