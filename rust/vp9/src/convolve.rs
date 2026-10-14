@@ -98,8 +98,6 @@ pub static FILTERS: [[[i16; 8]; 16]; 4] = [
 
 /// The taps reach 3 samples before the one predicted and 4 after it.
 const BEFORE: usize = 3;
-/// The rows the horizontal pass makes for the vertical one, past the block's.
-const EXTRA: usize = 7;
 
 /// libvpx's `vpx_convolve_copy`.
 unsafe fn copy<const W: usize>(src: *const u8, src_stride: usize, dst: *mut u8, dst_stride: usize, h: usize) {
@@ -115,7 +113,11 @@ mod scalar {
     use core::mem::MaybeUninit;
     use core::ptr::copy_nonoverlapping;
 
-    use super::{BEFORE, EXTRA};
+    use super::BEFORE;
+
+    /// The rows the horizontal pass makes for the vertical one, past the
+    /// block's.
+    const EXTRA: usize = 7;
 
     /// One sample: eight taps a `step` apart starting at `p`, rounded to 7 bits
     /// and clipped.
