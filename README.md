@@ -260,8 +260,8 @@ keeping track of which blocks are the last frame's still so that a row copies
 less, were measured and not done: the whole row is one sequential pass that
 also brings the reference's lines into cache for the blocks that move, and
 telling a block unchanged cost about what copying it did. The second is
-now done, differently, for the frames `screen-vp9` 0.0.12 codes told
-where the picture changed: the blocks outside the change are a segment that
+now done, differently, for the frames `screen-vp9` codes told where the
+picture changed, which it has since 0.0.12 introduced libvpx's active map: the blocks outside the change are a segment that
 skips and is not loop filtered, so a frame knows for nothing which 64×64
 blocks it wrote, each frame stamps its blocks with the newest frame of its
 reference chain that did, and a buffer still holding a frame of that chain
@@ -285,7 +285,7 @@ of one tile column, two and four, which is the busy case a change is judged
 on; and a `flood` of text, every line new, the worst case, there for
 reference and no target. They are cut from wlshare's captures by its
 `scripts/vp9-samples.sh` as the `screen-vp9` it pins codes each size, told
-where the picture changed. `bench/samples.sh` copies them once from the
+where the picture changed: 0.0.18 for the samples now on the drive. `bench/samples.sh` copies them once from the
 `bench` folder of the artifacts drive, or from `VP9_BENCH_SOURCE`, to
 `tmp/bench`, and no run reads the drive. That folder has a sample of every
 size captured and of the other scenarios, and
