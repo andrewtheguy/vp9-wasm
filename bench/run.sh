@@ -12,8 +12,8 @@
 # On Linux the builds run on the same cores (taskset) and the counts are perf stat's of user space. On a Mac no
 # process can be held to a core, so the rounds, five there, are what evens out a performance core against an efficiency
 # one and the load of a Mac in use, and the counts are /usr/bin/time -l's, user and kernel together; a Mac's numbers
-# are compared with a Mac's alone. The first module named is first checked against every sample's MD5s, and a Linux
-# host is waited on until it is quiet, a Mac only when QUIET names a load.
+# are compared with a Mac's alone. The first module named is first checked against every sample's MD5s under each
+# engine, and a Linux host is waited on until it is quiet, a Mac only when QUIET names a load.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ $# -gt 0 ] || set -- build/out
@@ -70,9 +70,14 @@ counted() {
   fi
 }
 
-for s in $samples; do
-  [ "$1" = libvpx ] && break
-  VP9_WASM_DIR=$1 CHECK=1 bun bench/decode.ts "$dir/$s.ivf" 4 $limit | sed "s|^|$s: |"
+# The first module named, under each engine.
+first=''
+for b in "$@"; do [ "$b" = libvpx ] || { first=$b; break; }; done
+for e in $engines; do
+  [ -n "$first" ] || break
+  for s in $samples; do
+    VP9_WASM_DIR=$first CHECK=1 "$e" bench/decode.ts "$dir/$s.ivf" 4 $limit | sed "s|^|$e: $s: |"
+  done
 done
 
 # decoded RUN FRAMES: one run of libvpx or of ENGINE:BUILD on the sample, of at most FRAMES frames (all when empty), as the line
