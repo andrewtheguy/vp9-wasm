@@ -1,15 +1,17 @@
-// bun bench/decode.ts FILE.ivf THREADS [FRAMES]: the module in VP9_WASM_DIR (build/out) decoding a stream, timed per frame
-// by its own clock. With CHECK=1 each picture's MD5 is compared with FILE.ivf.framemd5, outside the timing.
-import { ivfFrames } from "../test/ivf";
-import { decodeFrame, loadModule, pictureMd5 } from "../test/module";
+// bun|node bench/decode.ts FILE.ivf THREADS [FRAMES]: the module in VP9_WASM_DIR (build/out) decoding a stream, timed per
+// frame by its own clock, under Bun or Node. With CHECK=1 each picture's MD5 is compared with FILE.ivf.framemd5, outside
+// the timing.
+import { readFileSync } from "node:fs";
+import { ivfFrames } from "../test/ivf.ts";
+import { decodeFrame, loadModule, pictureMd5 } from "../test/module.ts";
 
 const [file, t = "1", limit = "100000"] = process.argv.slice(2);
-if (!file) throw new Error("usage: bun bench/decode.ts FILE.ivf THREADS [FRAMES]");
+if (!file) throw new Error("usage: bun|node bench/decode.ts FILE.ivf THREADS [FRAMES]");
 const threads = Number(t);
 const check = process.env.CHECK === "1";
 const loaded = await loadModule(Math.max(threads, 1));
-const frames = ivfFrames(new Uint8Array(await Bun.file(file).arrayBuffer())).slice(0, Number(limit));
-const md5s = check ? (await Bun.file(`${file}.framemd5`).text()).split("\n").filter((l) => l && !l.startsWith("#")).map((l) => l.split(",").pop()!.trim()) : [];
+const frames = ivfFrames(new Uint8Array(readFileSync(file))).slice(0, Number(limit));
+const md5s = check ? readFileSync(`${file}.framemd5`, "utf8").split("\n").filter((l) => l && !l.startsWith("#")).map((l) => l.split(",").pop()!.trim()) : [];
 const decoder = new loaded.glue.Decoder(threads);
 const times: number[] = [];
 let mismatch = -1;

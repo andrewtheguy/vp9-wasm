@@ -2,11 +2,15 @@
 
 What was built, measured and not kept, so that it is not tried again as it
 was. Each was measured on the four earlier captures that
-[measurements.md](measurements.md) names, per frame on one thread. None has
-been measured on the video of wlshare's captures, which is what a change is
-judged on now and where the loop filter is a quarter of a 1920×1080 frame;
-only on the flood of text, two thirds token parsing, are these parts smaller
-still.
+[measurements.md](measurements.md) names, per frame on one thread, unless it
+says otherwise. Few have been measured on the video of wlshare's captures,
+which is what a change is judged on now and where the loop filter is a
+quarter of a 1920×1080 frame; only on the flood of text, two thirds token
+parsing, are these parts smaller still. And but for what says a Mac, each
+was measured on x86, mostly under Bun, whose JavaScriptCore there makes a
+shuffle of two vectors three instructions where it makes it one on the ARM
+of a Mac, the target: what turned on shuffles may rank otherwise there, as
+the loop filter's pairs did.
 
 ## Most of the still blocks' copy not made
 
@@ -170,5 +174,18 @@ where the time goes. Not kept.
   more on the recording: the function's size and what the engine makes of
   it decide more than the arithmetic saved.
 
-libvpx's own `ss00` path for 4:4:4, whose kernels filter two rows of 8×8
-blocks at once, is untried, and the pairs above say it is no gain here.
+- With libvpx's pairs, which are now done, the kernels inlined into the
+  walk as before: the same video as with each a function of its own, and
+  the quiet terminal 5% more cycles under Bun on x86. Each is a function of
+  its own.
+- The pairs of one direction alone, on x86 under Node: the horizontal ones
+  0.8% fewer cycles on the 1920×1080 video and the vertical ones 0.8%,
+  against 2.7% for both. Not measured on the Mac.
+
+libvpx's own pairs for 4:4:4, two edges of the same width to a call, each
+with its own limits, the narrow and the 8-sample ones, are what the module
+now does ([measurements.md](measurements.md)): on an M2 Max a filtered
+video frame takes 5% to 8% fewer cycles under Safari's engine and under
+Chrome's. The pairs above were measured under Bun on x86 alone, where
+JavaScriptCore makes a shuffle of two vectors three instructions; there the
+same pairs are still 3% slower on a video frame, and 2% faster under V8.

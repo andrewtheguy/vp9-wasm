@@ -24,12 +24,15 @@ build that leaves it out (which changes the picture, so the costs are near
 and not exact). In the order the work would go:
 
 - **The loop filter, under 2048 wide.** 17.9 M cycles of a 1920×1080 video
-  frame's 67, where libvpx's is 11.1 of 45, and 1.3 of the quiet terminal's
-  5.9 at 1440×900. What was tried on the kernels ([tried.md](tried.md)) was
-  measured on the earlier captures and not on a video; libvpx's `dual`
-  kernels, two edges of eight positions to a call, are untried. The masks
-  settled as the blocks are parsed, as hevc-wasm's boundary strengths are,
-  remain the smaller part.
+  frame's 67 on x86 under Bun, where libvpx's is 11.1 of 45, and 1.3 of the
+  quiet terminal's 5.9 at 1440×900, before its narrow and 8-sample edges
+  went two to a call as libvpx's `_dual` kernels take them, which made a
+  filtered video frame 5% to 8% faster on an M2 Max under either engine
+  ([measurements.md](measurements.md)). The 16-sample edges are still one
+  at a time, and on the video nine in ten of them leave early. What the
+  filter now costs against libvpx has not been measured on the Mac. The
+  masks settled as the blocks are parsed, as hevc-wasm's boundary strengths
+  are, remain the smaller part.
 - **The transforms.** About 10 M cycles of a 4K video frame where libvpx's
   are 6.7, down from 14.0 now that the 8- and 16-point transforms run in
   vectors, short DCTs over their top-left corner alone and a DC alone as a
@@ -86,8 +89,12 @@ and not exact). In the order the work would go:
   rest; nothing uses `bitmask`. Not measured: iOS, whose Safari may give a
   shared memory bounds checks, and its two performance cores beside four
   efficiency ones, onto which the thread that parses may be put.
-- **The video on Apple silicon.** What the M2 above says is of the flood;
-  the video has not been run there.
+- **The video on Apple silicon against libvpx.** What the M2 above says of
+  libvpx is of the flood. The video has been run on an M2 Max only against
+  the module itself, for the loop filter's pairs
+  ([measurements.md](measurements.md)), where a 1920×1080 frame took 31 M
+  cycles on one thread under Bun and 29 under Node, against 56 to 69 on
+  x86.
 - **Eight threads.** remotex starts a pool of up to eight. Five and six on
   six cores gain nothing on the video and the walk and 12% on the browser at
   4K; eight on eight have not been run.

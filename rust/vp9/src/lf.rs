@@ -137,61 +137,135 @@ impl LoopFilter {
 
         // The frame's left edge is not filtered, nor its top one.
         let border = if mi_col == 0 { !1u32 } else { !0 };
+        // The widest filter of each edge of a row, 16, 8 or 4, by column: none
+        // where the bit of each mask is clear.
+        let width = |masks: [u32; 3], bit: u32| {
+            if masks[0] & bit != 0 {
+                16
+            } else if masks[1] & bit != 0 {
+                8
+            } else if masks[2] & bit != 0 {
+                4
+            } else {
+                0
+            }
+        };
+        let limits = |r: usize, c: usize| {
+            let l = lfl[r * 8 + c] as usize;
+            (self.mblim[l], self.lim[l], (l >> 4) as u8)
+        };
         let pitch = f.stride as isize;
         for plane in f.planes {
             // SAFETY: the block is inside the plane, and an edge is filtered
             // only where there are eight samples on both sides of it.
             unsafe {
                 let sb = plane.add(mi_row * 8 * f.stride + mi_col * 8);
-                for r in 0..rows {
+                // The vertical edges of two rows at a time, column by column,
+                // since each reads what the one before it in its row wrote: two
+                // of the same width, one above the other, as one.
+                for r in (0..rows).step_by(2) {
                     let row = sb.add(r * 8 * f.stride);
-                    let (m16, m8, m4, int) = (mask_16x16_c[r] & border, mask_8x8_c[r] & border, mask_4x4_c[r] & border, mask_4x4_int[r]);
-                    let mut mask = m16 | m8 | m4 | int;
+                    let masks = |r: usize| [mask_16x16_c[r] & border, mask_8x8_c[r] & border, mask_4x4_c[r] & border];
+                    let (a, ia) = (masks(r), mask_4x4_int[r]);
+                    let (b, ib) = if r + 1 < rows { (masks(r + 1), mask_4x4_int[r + 1]) } else { ([0; 3], 0) };
+                    let mut mask = a[0] | a[1] | a[2] | ia | b[0] | b[1] | b[2] | ib;
                     while mask != 0 {
                         let c = mask.trailing_zeros() as usize;
                         mask &= mask - 1;
                         let bit = 1 << c;
-                        let l = lfl[r * 8 + c] as usize;
-                        let (mblim, lim, hev) = (self.mblim[l], self.lim[l], (l >> 4) as u8);
-                        let s = row.add(c * 8);
-                        if m16 & bit != 0 {
-                            lpf_vertical_16(s, pitch, mblim, lim, hev);
-                        } else if m8 & bit != 0 {
-                            lpf_vertical_8(s, pitch, mblim, lim, hev);
-                        } else if m4 & bit != 0 {
-                            lpf_vertical_4(s, pitch, mblim, lim, hev);
+                        let (s, below) = (row.add(c * 8), row.add(8 * f.stride + c * 8));
+                        let (wa, wb) = (width(a, bit), width(b, bit));
+                        let (b0, l0, t0) = limits(r, c);
+                        // Of a last row alone, the row below's limits are not read.
+                        let (b1, l1, t1) = if wb != 0 || ib & bit != 0 { limits(r + 1, c) } else { (0, 0, 0) };
+                        match (wa, wb) {
+                            (4, 4) => lpf_vertical_4_dual(s, pitch, b0, l0, t0, b1, l1, t1),
+                            (8, 8) => lpf_vertical_8_dual(s, pitch, b0, l0, t0, b1, l1, t1),
+                            _ => {
+                                vertical(wa, s, pitch, b0, l0, t0);
+                                vertical(wb, below, pitch, b1, l1, t1);
+                            }
                         }
-                        if int & bit != 0 {
-                            lpf_vertical_4(s.add(4), pitch, mblim, lim, hev);
+                        match (ia & bit != 0, ib & bit != 0) {
+                            (true, true) => lpf_vertical_4_dual(s.add(4), pitch, b0, l0, t0, b1, l1, t1),
+                            (true, false) => lpf_vertical_4(s.add(4), pitch, b0, l0, t0),
+                            (false, true) => lpf_vertical_4(below.add(4), pitch, b1, l1, t1),
+                            (false, false) => {}
                         }
                     }
                 }
+                // The horizontal edges row by row: two of the same width side
+                // by side as one.
                 for r in 0..rows {
                     let row = sb.add(r * 8 * f.stride);
                     let top = mi_row + r == 0;
-                    let (m16, m8, m4, int) = if top { (0, 0, 0, mask_4x4_int[r]) } else { (mask_16x16[r], mask_8x8[r], mask_4x4[r], mask_4x4_int[r]) };
-                    let mut mask = m16 | m8 | m4 | int;
+                    let masks = if top { [0; 3] } else { [mask_16x16[r], mask_8x8[r], mask_4x4[r]] };
+                    let int = mask_4x4_int[r];
+                    let mut mask = masks[0] | masks[1] | masks[2] | int;
                     while mask != 0 {
                         let c = mask.trailing_zeros() as usize;
-                        mask &= mask - 1;
                         let bit = 1 << c;
-                        let l = lfl[r * 8 + c] as usize;
-                        let (mblim, lim, hev) = (self.mblim[l], self.lim[l], (l >> 4) as u8);
+                        // The edge after it, taken with it.
+                        let next = mask & bit << 1;
+                        mask &= !(bit | next);
                         let s = row.add(c * 8);
-                        if m16 & bit != 0 {
-                            lpf_horizontal_16(s, pitch, mblim, lim, hev);
-                        } else if m8 & bit != 0 {
-                            lpf_horizontal_8(s, pitch, mblim, lim, hev);
-                        } else if m4 & bit != 0 {
-                            lpf_horizontal_4(s, pitch, mblim, lim, hev);
+                        let wa = width(masks, bit);
+                        let wb = width(masks, next);
+                        let (b0, l0, t0) = limits(r, c);
+                        let (b1, l1, t1) = if next != 0 { limits(r, c + 1) } else { (0, 0, 0) };
+                        match (wa, wb) {
+                            (4, 4) => lpf_horizontal_4_dual(s, pitch, b0, l0, t0, b1, l1, t1),
+                            (8, 8) => lpf_horizontal_8_dual(s, pitch, b0, l0, t0, b1, l1, t1),
+                            _ => {
+                                horizontal(wa, s, pitch, b0, l0, t0);
+                                horizontal(wb, s.add(8), pitch, b1, l1, t1);
+                            }
                         }
-                        if int & bit != 0 {
-                            lpf_horizontal_4(s.add(4 * f.stride), pitch, mblim, lim, hev);
+                        let inner = s.add(4 * f.stride);
+                        match (int & bit != 0, int & next != 0) {
+                            (true, true) => lpf_horizontal_4_dual(inner, pitch, b0, l0, t0, b1, l1, t1),
+                            (true, false) => lpf_horizontal_4(inner, pitch, b0, l0, t0),
+                            (false, true) => lpf_horizontal_4(inner.add(8), pitch, b1, l1, t1),
+                            (false, false) => {}
                         }
                     }
                 }
             }
         }
         true
+    }
+}
+
+/// Filters 8 rows along a vertical edge with the filter of `width` samples, or
+/// none when it is 0.
+///
+/// # Safety
+/// As `lpf_vertical_16` for the samples the filter reaches.
+#[inline(always)]
+unsafe fn vertical(width: u32, s: *mut u8, pitch: isize, blimit: u8, limit: u8, thresh: u8) {
+    unsafe {
+        match width {
+            16 => lpf_vertical_16(s, pitch, blimit, limit, thresh),
+            8 => lpf_vertical_8(s, pitch, blimit, limit, thresh),
+            4 => lpf_vertical_4(s, pitch, blimit, limit, thresh),
+            _ => {}
+        }
+    }
+}
+
+/// Filters 8 samples along a horizontal edge with the filter of `width`
+/// samples, or none when it is 0.
+///
+/// # Safety
+/// As `lpf_horizontal_16` for the samples the filter reaches.
+#[inline(always)]
+unsafe fn horizontal(width: u32, s: *mut u8, pitch: isize, blimit: u8, limit: u8, thresh: u8) {
+    unsafe {
+        match width {
+            16 => lpf_horizontal_16(s, pitch, blimit, limit, thresh),
+            8 => lpf_horizontal_8(s, pitch, blimit, limit, thresh),
+            4 => lpf_horizontal_4(s, pitch, blimit, limit, thresh),
+            _ => {}
+        }
     }
 }

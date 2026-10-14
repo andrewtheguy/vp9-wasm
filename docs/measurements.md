@@ -586,3 +586,61 @@ threads than the two columns with it that `screen-vp9` codes there now, as
 from 2048 wide; what the quiet terminal at those sizes gives for it, a
 light filter left off text at one sample to the pixel, has not been looked
 at ([remaining.md](remaining.md)).
+
+## The loop filter's edges two at a time, on a Mac and on x86
+
+The edges of a 1920×1080 video frame, counted natively over its 120 frames:
+some 63,000 a direction a frame over the three planes, of which 61% come to
+the narrow filter, 16% to the 7-tap one, 18% have the same samples across
+them and leave early, and few take the 15-tap filter. The narrow filter is
+arithmetic in bytes, so sixteen positions in a vector cost what the eight of
+one edge did, and libvpx's `_dual` kernels take two edges of the same width
+at once, each with its own limits: two side by side along a horizontal edge,
+which 96% of the horizontal edges have, and two one above the other along a
+vertical one, the walk taking two rows of blocks at a time, which three
+quarters of the vertical ones have. The module now does the same for the
+narrow and the 8-sample filters, the 16-sample edges staying one at a time;
+of two edges, one whose samples are the same across it is left and the other
+filtered alone, so an edge that would have left early still does. Each
+kernel is a function of its own: inlined into the walk, as they were, the
+terminal took 5% more cycles under Bun on x86 for the same video.
+
+`bench/run.sh` under both engines, M cycles a frame, before and after. On an
+M2 Max, the target, five rounds on a Mac in use; Bun's is Safari's
+JavaScriptCore and Node's Chrome's V8:
+
+| M2 Max | Bun, one thread | Node | Bun, four threads | Node |
+|---|---|---|---|---|
+| terminal 1440×900 | 3.2, 3.3 | 1.9, 1.9 | 4.6, 4.6 | 3.2, 2.5 |
+| video 1280×800 | 21.0, 19.9 | 19.7, 18.1 | 22.4, 21.3 | 22.1, 20.4 |
+| video 1920×1080 | 32.7, 30.6 | 31.5, 28.9 | 34.5, 32.7 | 34.3, 32.7 |
+| video 2560×1600, no filter | 42.0, 42.0 | 40.0, 40.0 | 46.2, 44.4 | 43.3, 44.4 |
+| video 3840×2160, no filter | 68.1, 68.2 | 65.6, 65.6 | 71.3, 71.2 | 68.9, 69.2 |
+| flood 1920×1080 | 360, 350 | 395, 383 | 367, 359 | 404, 390 |
+
+On the six-core x86 workstation, three rounds:
+
+| x86 | Bun, one thread | Node | Bun, four threads | Node |
+|---|---|---|---|---|
+| terminal 1440×900 | 6.1, 5.9 | 3.1, 3.0 | 8.4, 8.0 | 4.2, 4.2 |
+| video 1280×800 | 43.3, 43.7 | 34.6, 33.8 | 41.9, 42.5 | 35.9, 34.9 |
+| video 1920×1080 | 67.0, 68.7 | 57.3, 55.9 | 68.1, 68.5 | 60.2, 58.4 |
+| flood 1920×1080 | 578, 576 | 588, 576 | 593, 590 | 598, 590 |
+
+A filtered video frame takes 5% to 8% fewer cycles on the Mac under either
+engine, and the flood 3%; the unfiltered samples and the terminal are the
+same within what a Mac in use gives. On x86 V8 gains 2% to 3% and
+JavaScriptCore loses up to 3%: on x86 it makes each shuffle of two vectors
+that is not of 64-bit halves two `pshufb` and an `or`, where V8 makes it one
+`punpck` and JavaScriptCore on ARM one `zip` or `tbl`, and the vertical
+pairs take eight shuffles of two vectors more than two single edges, to
+turn sixteen rows rather than eight. Disassembled from its jitdump, the
+vertical pair's code under Bun on x86 is 86 `vpshufb` and 57 `vorps`.
+
+On x86, under Node, the pairs of one direction alone gave none of it: the
+horizontal ones alone 0.8% fewer cycles on the 1920×1080 video, the vertical
+ones alone 0.8%, both 2.7%. Loads blocked on a store not yet written
+(`ld_blocks.store_forward`), the next edge's rows read across what the last
+one wrote, were 25 M over the video's 120 frames before and 8 M after, where
+libvpx's are 6 M; the horizontal pairs alone take them off as well, so they
+were not what the frame waited on.

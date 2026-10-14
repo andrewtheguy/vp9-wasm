@@ -21,6 +21,9 @@ and build details belong in the [README](README.md).
 - To measure a change, run `bench/run.sh BASE build/out`, minutes on short
   samples. Run whole captures only when asked, and never read a stream from
   the artifacts drive: copy it under `tmp/` first.
+- A change is decided by `bench/run.sh` on a Mac on ARM, the target, under
+  both engines; the user runs it there. A Linux host on x86 measures the Mac
+  on x86, the secondary target, and decides nothing alone.
 - Do not run `cargo fmt`.
 - Put temporary files and test configuration under `tmp/`. Always run local
   Python through `uv` (GitHub Actions excluded).
