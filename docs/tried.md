@@ -128,6 +128,17 @@ chain like every other block and token, and what the other thirty cycles
 are is mostly the branch on whether the block has coefficients, which a
 third of the Mac's do.
 
+## The transforms' dispatch
+
+On wlshare's 4K video a frame's transforms are 14 M cycles, some 140 a
+block against libvpx's 67, and a fifth of `inverse_add`'s samples are its
+entry, which takes the 4 KB of stack the plain 32×32 transform's
+intermediate needs on every call, a 4×4's too. The plain transforms moved to
+a function of their own, so that the vector paths and the DC alone take
+none of it and the shift table is no longer stored on each call: the same
+cycles on every sample to 1%. The entry was where the samples land, not
+where the time goes. Not kept.
+
 ## The loop filter's kernels
 
 - The six kernels as functions of their own rather than inlined into the
