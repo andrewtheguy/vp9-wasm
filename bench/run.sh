@@ -78,7 +78,8 @@ decoded() {
     n=$(grep -o '^[0-9]* pictures' <<<"$out" | cut -d' ' -f1)
     ms=$(grep -o 'mean [0-9.]*' <<<"$out" | cut -d' ' -f2 | awk -v n="$n" '{print $1 * n}'); median=$(grep -o 'median [0-9.]*' <<<"$out" | cut -d' ' -f2)
   fi
-  echo "$n $(grep '^@instructions' <<<"$out" | cut -d' ' -f2) $(grep '^@cycles' <<<"$out" | cut -d' ' -f2) $ms $median"
+  # A run that decoded nothing prints no count, given as 0 so that the fields after it stay in place.
+  echo "${n:-0} $(grep '^@instructions' <<<"$out" | cut -d' ' -f2) $(grep '^@cycles' <<<"$out" | cut -d' ' -f2) $ms $median"
 }
 
 log=$(mktemp); trap 'rm -f "$log"' EXIT
@@ -90,6 +91,7 @@ for t in ${THREADS:-1 4}; do
     for ((r = 0; r < rounds; r++)); do
       for b in "$@"; do
         read -r n i c ms median <<<"$(decoded "$b" "$limit")"
+        [[ "$n" =~ ^[0-9]+$ && "$n" -gt 1 ]] || { echo "$b on $s: decoded '${n}' frames, not more than the one subtracted" >&2; exit 1; }
         read -r _ i1 c1 ms1 _ <<<"$(decoded "$b" 1)"
         awk -v b="$b" -v n="$n" -v i="$i" -v c="$c" -v ms="$ms" -v i1="$i1" -v c1="$c1" -v ms1="$ms1" -v m="$median" \
           'BEGIN {a = (ms - ms1) / (n - 1); print b, (i - i1) / (n - 1) / 1e6, (c - c1) / (n - 1) / 1e6, a, b == "libvpx" ? a : m}' >>"$log"
