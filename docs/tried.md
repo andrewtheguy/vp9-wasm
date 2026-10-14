@@ -2,9 +2,11 @@
 
 What was built, measured and not kept, so that it is not tried again as it
 was. Each was measured on the four earlier captures that
-[measurements.md](measurements.md) names, per frame on one thread, and each
-is on a part of the frame that is smaller still on the gateway's busy
-frames, where two thirds of the time is token parsing.
+[measurements.md](measurements.md) names, per frame on one thread. None has
+been measured on the video of wlshare's captures, which is what a change is
+judged on now and where the loop filter is a quarter of a 1920×1080 frame;
+only on the flood of text, two thirds token parsing, are these parts smaller
+still.
 
 ## Most of the still blocks' copy not made
 

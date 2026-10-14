@@ -17,8 +17,10 @@ os=$(uname -s)
 # FRAMES=all, the default, is no limit: neither decoder is then given a count. Both are left unquoted where used.
 limit='' fflimit=''
 [ "${FRAMES:-all}" = all ] || { limit=$FRAMES fflimit="-frames:v $FRAMES"; }
-# The default is five of the artifacts drive's bench folder, which has a quiet and a busy sample of every size captured.
-samples=${SAMPLES:-quiet-1440x900-2col-lf busy-1280x800-1col-lf busy-1920x1080-2col-lf busy-2560x1600-4col-nolf busy-3840x2160-4col-nolf}
+# The default is a quiet desktop, a video full screen at four sizes, which is the busy case a change is judged on, and
+# last a flood of text, the worst case, there for reference and no target. The artifacts drive's bench folder has a
+# sample of every size, each named for wlshare's capture it is cut from.
+samples=${SAMPLES:-terminal-1440x900-2col-lf video-1280x800-1col-lf video-1920x1080-2col-lf video-2560x1600-4col-nolf video-3840x2160-4col-nolf flood-1920x1080-2col-lf}
 dir=$(bench/samples.sh $samples)
 
 # The 1-, 5- and 15-minute loads. An idle Mac's background keeps its 1-minute load near 2, so its quiet is 3.
