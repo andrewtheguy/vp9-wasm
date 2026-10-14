@@ -132,7 +132,13 @@ third of the Mac's do.
 
 - The six kernels as functions of their own rather than inlined into the
   filter's loop: 4% more instructions and no fewer cycles, although the loop
-  is a 5,000-instruction function full of spills.
+  is a 5,000-instruction function full of spills. Tried again on wlshare's
+  captures, the vertical and the horizontal kernel each a function of its
+  own: on one thread 1% to 11% fewer cycles on the quiet terminal under 2048
+  wide, its median frame a fifth to a third faster (0.69 ms to 0.51 at
+  1280×800), and 0.5% to 1.3% more on the video, the walk and the browser;
+  on four threads, as the page decodes, every filtered sample within 2%
+  either way. Not kept.
 - Two edges that lie end to end in one vector, whatever their widths
   (`tmp/lf-pair-kept` holds that version): on this tree 17% more
   instructions and 12% more cycles on the Mac capture, 23% and 17% on the
