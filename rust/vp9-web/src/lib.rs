@@ -125,11 +125,11 @@ impl Decoder {
     /// transfer as ITU-T H.273 numbers them (`2` for unstated), each plane's
     /// start in this module's memory, each plane's stride, whether it is a
     /// keyframe, and its serial, which [`Self::release`] takes. The planes
-    /// are good until it is released.
+    /// are good until it is released, and all sixteen are 0 once it is.
     pub fn picture(&mut self) -> *const i32 {
         let p = &mut self.picture;
         *p = [0; PICTURE_FIELDS];
-        if let Some((serial, d)) = self.held.last() {
+        if let Some((serial, d)) = self.held.last().filter(|(s, _)| *s == self.serial) {
             let f = &d.frame;
             // VP9's color_space as H.273's matrix, primaries and transfer.
             let [matrix, primaries, transfer] = match f.colour.space {

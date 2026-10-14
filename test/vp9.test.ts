@@ -156,6 +156,18 @@ describe("a 4:4:4 stream", () => {
     });
   });
 
+  test("once the last picture is released, picture() describes none, though an earlier one is still held", () => {
+    const fixture = fixtures["screen-352x256"];
+    withDecoder(1, (d) => {
+      const earlier = decodeHeld(loaded, d, fixture.frames[0]!)!;
+      const latest = decodeHeld(loaded, d, fixture.frames[1]!)!;
+      d.release(latest.serial);
+      expect([...new Int32Array(loaded.memory.buffer, d.picture(), 16)]).toEqual(new Array(16).fill(0));
+      expect(pictureMd5(loaded, earlier)).toBe(fixture.md5s[0]!);
+      d.release(earlier.serial);
+    });
+  });
+
   test("two decoders decode side by side", () => {
     const a = fixtures["screen-330x194"];
     const b = fixtures["tiles-608x130"];
