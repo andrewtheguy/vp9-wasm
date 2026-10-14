@@ -28,10 +28,11 @@ work would go:
   alone, and 22,000 8×8s, so 140 cycles a block against libvpx's 67. The
   vector kernels are 8.6 M of the 14 (leaving them alone out), the plain
   ones about 4, and the call and dispatch the rest; taking the plain ones out
-  of the dispatch gained nothing ([tried.md](tried.md)). The vector kernels'
-  instructions are about what libvpx's SSE2 has, but V8 makes each vector
-  constant again at each use, three instructions, and the DC add's clip is
-  two more than a saturating add would be. The ADST at 8 and 16 and
+  of the dispatch gained nothing ([tried.md](tried.md)). In the vector
+  kernels V8 makes each vector constant again at each use, three
+  instructions, and the DC add clamps with a max and a min before the
+  narrowing that saturates by itself; the kernels have not been set beside
+  libvpx's instruction for instruction. The ADST at 8 and 16 and
   the DCT at 16 and 32 are in plain code, 4 M of the 14; an exact port needs
   32-bit lanes for the ADST, whose stages libvpx's C keeps at 32 bits.
 - **The loop filter, under 2048 wide.** 17.9 M cycles of a 1920×1080 video
