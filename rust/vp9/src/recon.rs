@@ -302,9 +302,7 @@ impl<'a> Recon<'a> {
             if eob == 1 {
                 let Some(&dc) = buf.coeffs.get(self.next_coeff) else { return };
                 self.next_coeff += 1;
-                block[0] = dc;
-                itx::inverse_add(tx, tx_type, lossless, &block[..n * n], 1, dst, stride);
-                block[0] = 0;
+                itx::add_first(tx, tx_type, lossless, dc, dst, stride);
             } else if tx == 0 {
                 // A 4×4 is left whole, as the transform takes it.
                 let Some(whole) = buf.coeffs.get(self.next_coeff..self.next_coeff + 16) else { return };

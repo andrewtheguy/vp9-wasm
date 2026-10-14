@@ -11,9 +11,9 @@
 //! Each DCT is its half-size DCT over the even inputs plus a stage for the odd
 //! ones, which is what the C's flat stages compute.
 //!
-//! The 4×4 transforms, the 8×8 DCT and the add of a block of one coefficient
-//! have twins in WebAssembly vectors in `simd128`, exact to these for every
-//! input, which the module runs; the rest run as they are.
+//! The transforms at 4, 8 and 16 points and the add of a block of one
+//! coefficient have twins in WebAssembly vectors in `simd128`, exact to these
+//! for every input, which the module runs; the 32-point DCT runs as it is.
 
 use core::num::Wrapping;
 
@@ -329,24 +329,31 @@ unsafe fn add_2d<const N: usize>(
 /// libvpx's `vpx_idct{4x4,8x8,16x16,32x32}_1_add_c`: a block whose only
 /// coefficient is the DC adds one value to every sample.
 #[inline(always)]
-unsafe fn add_dc(n: usize, shift: u32, dc: i16, dst: *mut u8, stride: usize) {
-    let a1 = (rs(rs(dc as i32 * C16) * C16) + (1 << (shift - 1))) >> shift;
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    // SAFETY: the caller's: the block is n samples square.
-    return unsafe {
-        match n {
-            4 => simd128::add_dc::<4>(a1, dst, stride),
-            8 => simd128::add_dc::<8>(a1, dst, stride),
-            16 => simd128::add_dc::<16>(a1, dst, stride),
-            _ => simd128::add_dc::<32>(a1, dst, stride),
+unsafe fn add_dc(tx_size: usize, dc: i16, dst: *mut u8, stride: usize) {
+    // SAFETY: the caller's.
+    unsafe {
+        match tx_size {
+            0 => add_dc_n::<4, 4>(dc, dst, stride),
+            1 => add_dc_n::<8, 5>(dc, dst, stride),
+            2 => add_dc_n::<16, 6>(dc, dst, stride),
+            _ => add_dc_n::<32, 6>(dc, dst, stride),
         }
-    };
+    }
+}
+
+/// `add_dc` of an `N`×`N` block, rounded by `SHIFT`.
+#[inline(always)]
+unsafe fn add_dc_n<const N: usize, const SHIFT: u32>(dc: i16, dst: *mut u8, stride: usize) {
+    let a1 = (rs(rs(dc as i32 * C16) * C16) + (1 << (SHIFT - 1))) >> SHIFT;
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: the caller's: the block is N samples square.
+    return unsafe { simd128::add_dc::<N>(a1, dst, stride) };
     #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-    for y in 0..n {
-        // SAFETY: the caller's: row y of the block, n samples wide.
+    for y in 0..N {
+        // SAFETY: the caller's: row y of the block, N samples wide.
         unsafe {
             let d = dst.add(y * stride);
-            for x in 0..n {
+            for x in 0..N {
                 let p = d.add(x);
                 *p = clip_add(*p, a1);
             }
@@ -412,10 +419,11 @@ unsafe fn iwht4x4_1_add(dc: i16, dst: *mut u8, stride: usize) {
 /// coeffs: n*n coefficients, row-major exactly as libvpx's dqcoeff. Not modified.
 /// eob: number of coefficients in scan order that may be non-zero (>= 1). It
 /// picks what libvpx's `vp9_idct*_add` picks: for DCT_DCT, the DC alone at 1,
-/// and the first 4 rows at up to 12 (8x8) or 10 (16x16), the first 8 at up to
-/// 38 (16x16) or 34 (32x32), the first 16 at up to 135 (32x32), which is where
-/// the default scan keeps that many coefficients. The other types, whose scans
-/// differ, read every row.
+/// and the top-left 4×4 at up to 12 (8x8) or 10 (16x16), the top-left 8×8 at
+/// up to 38 (16x16) or 34 (32x32), the top-left 16×16 at up to 135 (32x32),
+/// which is where the default scan keeps that many coefficients: the plain
+/// transforms read those rows whole and the vector ones the square alone. The
+/// other types, whose scans differ, read every row.
 ///
 /// Nothing is added when `coeffs` is shorter than the block or `tx_size` is past 3.
 ///
@@ -443,12 +451,13 @@ pub unsafe fn inverse_add(
         }
         let dct = tx_type == 0 || tx_size == 3;
         if dct && eob <= 1 {
-            return add_dc(n, [4, 5, 6, 6][tx_size], coeffs[0], dst, stride);
+            return add_dc(tx_size, coeffs[0], dst, stride);
         }
         #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
         match (tx_size, tx_type) {
             (0, t) => return simd128::add_4x4(t, coeffs.as_ptr(), dst, stride),
-            (1, 0) => return simd128::add_8x8(coeffs.as_ptr(), dst, stride),
+            (1, t) => return simd128::add_8x8(t, coeffs.as_ptr(), eob, dst, stride),
+            (2, t) => return simd128::add_16x16(t, coeffs.as_ptr(), eob, dst, stride),
             _ => {}
         }
         match (tx_size, tx_type) {
@@ -473,6 +482,39 @@ pub unsafe fn inverse_add(
             }
         }
     }
+}
+
+/// `inverse_add` of a block whose only coefficient is its first, `dc`, at an
+/// eob of 1, the block itself made only where an ADST needs it.
+///
+/// # Safety
+/// As `inverse_add`'s.
+pub unsafe fn add_first(tx_size: usize, tx_type: usize, lossless: bool, dc: i16, dst: *mut u8, stride: usize) {
+    if tx_size > 3 {
+        return;
+    }
+    // SAFETY: the caller's.
+    unsafe {
+        if lossless {
+            return iwht4x4_1_add(dc, dst, stride);
+        }
+        if tx_type == 0 || tx_size == 3 {
+            return add_dc(tx_size, dc, dst, stride);
+        }
+        match tx_size {
+            0 => inverse_add(0, tx_type, false, &first::<16>(dc), 1, dst, stride),
+            1 => inverse_add(1, tx_type, false, &first::<64>(dc), 1, dst, stride),
+            _ => inverse_add(2, tx_type, false, &first::<256>(dc), 1, dst, stride),
+        }
+    }
+}
+
+/// A block of `N` coefficients, `dc` first and zeros after it.
+#[inline(always)]
+fn first<const N: usize>(dc: i16) -> [i16; N] {
+    let mut c = [0; N];
+    c[0] = dc;
+    c
 }
 
 #[cfg(test)]
@@ -522,26 +564,33 @@ mod tests {
 
     #[test]
     fn dc_alone_equals_the_full_transform() {
-        for (s, l) in [(0, true), (0, false), (1, false), (2, false), (3, false)] {
+        for (s, t, l) in kinds() {
             let n = 4 << s;
             for dc in [1, -1, 7, -64, 500, -1023, 4095, i16::MAX, i16::MIN] {
                 let mut c = vec![0i16; n * n];
                 c[0] = dc;
-                let (mut a, mut b) = (ramp(n), ramp(n));
-                add(s, 0, l, &c, 1, &mut a);
-                add(s, 0, l, &c, n * n, &mut b);
-                assert_eq!(a, b, "{s} {l} {dc}");
+                let (mut a, mut b, mut f) = (ramp(n), ramp(n), ramp(n));
+                add(s, t, l, &c, 1, &mut a);
+                add(s, t, l, &c, n * n, &mut b);
+                // SAFETY: f is the n by n block.
+                unsafe { super::add_first(s, t, l, dc, f.as_mut_ptr(), n) };
+                assert_eq!(a, b, "{s} {t} {l} {dc}");
+                assert_eq!(f, b, "{s} {t} {l} {dc}");
             }
         }
     }
 
     #[test]
-    fn leading_rows_alone_equal_the_full_transform() {
-        // (tx_size, eob, rows that eob leaves to read)
-        for (s, eob, rows) in [(1, 12, 4), (2, 10, 4), (2, 38, 8), (3, 34, 8), (3, 135, 16)] {
+    fn the_top_left_alone_equals_the_full_transform() {
+        // (tx_size, eob, the side of the square that eob leaves to read)
+        for (s, eob, k) in [(1, 12, 4), (2, 10, 4), (2, 38, 8), (3, 34, 8), (3, 135, 16)] {
             let n = 4 << s;
             let mut c = noise(n, 99 + eob as u32, 6);
-            c[rows * n..].fill(0);
+            for (i, c) in c.iter_mut().enumerate() {
+                if i / n >= k || i % n >= k {
+                    *c = 0;
+                }
+            }
             let (mut a, mut b) = (ramp(n), ramp(n));
             add(s, 0, false, &c, eob, &mut a);
             add(s, 0, false, &c, n * n, &mut b);
