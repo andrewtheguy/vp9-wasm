@@ -437,6 +437,43 @@ them a DC alone, 5,000 4×4 ADSTs, 22,000 8×8 DCTs, 13,000 of them a DC
 alone, and some 500 of 16×16; the module's transforms are some 140 cycles a
 block, libvpx's 67.
 
+The transforms were then timed alone, replaying the 3,000,000 transform
+blocks the native decoder met in the 4K video's first frames through
+`inverse_add` as `residual` calls it, in a module of the transforms alone
+under Node (`tmp/itx`), cycles a block of each kind, before and after the
+8- and 16-point transforms went into vectors, a DCT short enough for its
+top-left 4×4 or 8×8 alone, and the DC alone as a saturating add of bytes:
+
+| kind | share of the blocks | before | after |
+|---|---|---|---|
+| a DC alone | 52% | 67 | 35 |
+| 4×4 DCT | 28% | 72 | 73 |
+| 4×4 ADST | 10% | 104 | 93 |
+| 8×8 DCT, 86% of them a top-left 4×4 | 7.4% | 295 | 233 |
+| 8×8 ADST | 1.9% | 923 | 428 |
+| 16×16 | 0.6% | 4,649 | 1,218 |
+| every block | | 156 | 97 |
+
+Before, the 16×16s and the 8×8 ADSTs, in plain code, were 2.5% of the blocks
+and a third of the cycles. Each kernel is exact to the plain code over the
+replay and over 1,600,000 random blocks of every kind, their coefficients at
+the ends of 16 bits among them. In the decoder, M cycles a frame on one
+thread and four, before and after:
+
+| | one thread | | four | |
+|---|---|---|---|---|
+| terminal 1440×900 | 6.2 | 6.3 | 7.9 | 8.0 |
+| video 1280×800 | 44.1 | 44.0 | 42.3 | 41.8 |
+| video 1920×1080 | 67.3 | 66.9 | 67.8 | 67.6 |
+| video 2560×1600 | 85.6 | 83.7 | 89.4 | 87.2 |
+| video 3840×2160 | 141.3 | 137.2 | 146.7 | 142.3 |
+| flood 1920×1080 | 570.9 | 574.7 | 583.1 | 588.9 |
+
+The terminal has 6,800 transform blocks in its 120 frames, and the flood's,
+nine in ten of them whole 4×4 DCTs, replay faster (109 cycles a block to
+94); counted whole with `perf stat`, each is within its own noise, the flood
+0.2% fewer instructions.
+
 Two changes came of it, checked bit for bit on every sample on one thread
 and four. The row of an inter frame was copied whole from the LAST
 reference before its blocks were made, so that a still block was in place

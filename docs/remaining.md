@@ -22,19 +22,6 @@ below, each part's cost measured by a build that leaves it out (which
 changes the picture, so the costs are near and not exact). In the order the
 work would go:
 
-- **The transforms.** 14.0 M cycles of a 4K video frame where libvpx's are
-  6.7, 10.5 of the walk's where libvpx's are 4.3: about 100,000 transform
-  blocks a 4K video frame, 72,000 of them 4×4 DCTs, more than half with a DC
-  alone, and 22,000 8×8s, so 140 cycles a block against libvpx's 67. The
-  vector kernels are 8.6 M of the 14 (leaving them alone out), the plain
-  ones about 4, and the call and dispatch the rest; taking the plain ones out
-  of the dispatch gained nothing ([tried.md](tried.md)). In the vector
-  kernels V8 makes each vector constant again at each use, three
-  instructions, and the DC add clamps with a max and a min before the
-  narrowing that saturates by itself; the kernels have not been set beside
-  libvpx's instruction for instruction. The ADST at 8 and 16 and
-  the DCT at 16 and 32 are in plain code, 4 M of the 14; an exact port needs
-  32-bit lanes for the ADST, whose stages libvpx's C keeps at 32 bits.
 - **The loop filter, under 2048 wide.** 17.9 M cycles of a 1920×1080 video
   frame's 67, where libvpx's is 11.1 of 45, and 1.3 of the quiet terminal's
   5.9 at 1440×900. What was tried on the kernels ([tried.md](tried.md)) was
@@ -42,6 +29,17 @@ work would go:
   kernels, two edges of eight positions to a call, are untried. The masks
   settled as the blocks are parsed, as hevc-wasm's boundary strengths are,
   remain the smaller part.
+- **The transforms.** About 10 M cycles of a 4K video frame where libvpx's
+  are 6.7, down from 14.0 now that the 8- and 16-point transforms run in
+  vectors, short DCTs over their top-left corner alone and a DC alone as a
+  saturating add of bytes ([measurements.md](measurements.md)). A replay of
+  the video's blocks gives 97 cycles a block; what is left is mostly the 4×4
+  DCT, 28% of the blocks at 73 cycles, of which the kernel is some 150
+  instructions: V8 makes each vector constant again at each use, three
+  instructions, takes the low halves of 32-bit lanes in four, and gives the
+  multiply that rounds a fixup of four for a product no constant here can
+  make. The call and the dispatch are some 60 instructions a block. The
+  32-point DCT, which the video has none of, is in plain code.
 - **Intra prediction in plain code.** 5.1 M cycles of the 4K video frame
   where libvpx's is 3.1, 6.4 of the walk's for 3.8, 10.3 of the browser's
   for 6.1, and 1.0 of the quiet terminal's 5.9 at 1440×900, a sixth of it.
