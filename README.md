@@ -161,19 +161,20 @@ its tables were transcribed from libvpx 1.16.0 (BSD-3-Clause,
 - `rust/vp9-web` is the page's module, in the shape of hevc-wasm's:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode`,
-  `picture` and `release`. `picture` describes the picture in the sixteen
+  `picture`, `changed` and `release`. `picture` describes the picture in the sixteen
   numbers hevc-wasm's does: its size, the chroma layout, the colour the stream
   states, each plane's address and stride in the module's memory, whether it
   is a keyframe, and its serial, so the paint worker uploads the planes to
   WebGL from the module's shared memory. A picture is held until the page
   releases it by its serial, and the frames after it decode into other
   buffers meanwhile, so the next frame decodes while the page uploads one.
-  `changed` says in four more numbers where the picture may differ from the
-  decoder's picture before it, the rectangle of the 64×64 blocks a frame
-  since that one wrote (`Frame::changed_since`): the whole picture for a
-  keyframe or one predicted from elsewhere, and a width of 0 where nothing
-  changed. A page that holds the picture before in its textures uploads
-  that rectangle alone, and nothing for a quiet desktop's frame.
+  `changed` takes the serial of a picture before, as hevc-wasm's does, and
+  says in four more numbers where the picture may differ from it, the
+  rectangle of the 64×64 blocks a frame since that one wrote
+  (`Frame::changed_since`): the whole picture for a keyframe or one that does
+  not come down from that one, and a width of 0 where nothing changed. A page
+  that holds that picture in its textures uploads that rectangle alone, and
+  nothing for a quiet desktop's frame.
 - `rust/vp9-bench` is the native harness above. To profile the module itself,
   run it under `node --perf-prof` and `perf record` on Linux, or on a Mac under
   `samply` with Bun's JavaScriptCore writing a jitdump
