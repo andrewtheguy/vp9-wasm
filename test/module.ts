@@ -23,6 +23,11 @@ export interface ModuleDecoder {
   input(size: number): number;
   decode(): boolean;
   picture(): number;
+  /**
+   * Where the last picture may differ from the decoder's picture before it, as four numbers: left, top, width and
+   * height, the whole picture where it is not predicted from that one, and a width of 0 where nothing changed.
+   */
+  changed(): number;
   release(serial: number): void;
   free(): void;
 }

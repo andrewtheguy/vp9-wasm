@@ -168,6 +168,45 @@ describe("a 4:4:4 stream", () => {
     });
   });
 
+  for (const name of ["active-map-330x194", "active-map-2048x66"] as const) {
+    for (const threads of [1, POOL]) {
+      test(`${name}: what a picture says changed holds every sample that did, on ${threads} thread(s)`, () => {
+        const fixture = fixtures[name];
+        withDecoder(threads, (d) => {
+          const heap = () => new Uint8Array(loaded.memory.buffer);
+          const whole = [0, 0, fixture.width, fixture.height];
+          let before: ModulePicture | null = null;
+          let less = 0;
+          for (const frame of fixture.frames) {
+            const picture = decodeHeld(loaded, d, frame)!;
+            const changed = [...new Int32Array(loaded.memory.buffer, d.changed(), 4)];
+            const [x, y, w, h] = changed as [number, number, number, number];
+            if (picture.keyframe || !before) {
+              expect(changed).toEqual(whole);
+            } else {
+              if (w < fixture.width || h < fixture.height) less++;
+              const outside = (col: number, row: number) => col < x || col >= x + w || row < y || row >= y + h;
+              picture.planes.forEach((plane, i) => {
+                const was = before!.planes[i]!;
+                for (let row = 0; row < fixture.height; row++) {
+                  for (let col = 0; col < fixture.width; col++) {
+                    if (outside(col, row) && heap()[plane.address + row * plane.stride + col] !== heap()[was.address + row * was.stride + col]) {
+                      throw new Error(`frame ${picture.serial}: (${col}, ${row}) changed outside ${changed}`);
+                    }
+                  }
+                }
+              });
+            }
+            if (before) d.release(before.serial);
+            before = picture;
+          }
+          expect(less).toBeGreaterThan(0);
+          d.release(before!.serial);
+        });
+      });
+    }
+  }
+
   test("two decoders decode side by side", () => {
     const a = fixtures["screen-330x194"];
     const b = fixtures["tiles-608x130"];

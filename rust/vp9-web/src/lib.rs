@@ -76,6 +76,10 @@ pub struct Decoder {
     /// The last picture's serial.
     serial: u32,
     picture: [i32; PICTURE_FIELDS],
+    /// Where the last picture may differ from the one before it
+    /// ([`Self::changed`]), and that one's frame in the decoder's count.
+    changed: [i32; 4],
+    shown: u64,
 }
 
 #[wasm_bindgen]
@@ -84,7 +88,7 @@ impl Decoder {
     /// caller for one.
     #[wasm_bindgen(constructor)]
     pub fn new(threads: usize) -> Decoder {
-        Decoder { inner: vp9::Decoder::new(threads), input: Vec::new(), held: Vec::new(), serial: 0, picture: [0; PICTURE_FIELDS] }
+        Decoder { inner: vp9::Decoder::new(threads), input: Vec::new(), held: Vec::new(), serial: 0, picture: [0; PICTURE_FIELDS], changed: [0; 4], shown: 0 }
     }
 
     /// Room for a frame of `size` bytes in this module's memory, where the
@@ -109,6 +113,8 @@ impl Decoder {
             return Ok(false);
         };
         self.serial = self.serial.wrapping_add(1).max(1);
+        self.changed = decoded.frame.changed_since(self.shown).map(|n| n as i32);
+        self.shown = decoded.frame.serial();
         self.held.push((self.serial, decoded));
         Ok(true)
     }
@@ -155,5 +161,15 @@ impl Decoder {
             p[14] = *serial as i32;
         }
         p.as_ptr()
+    }
+
+    /// Where the picture the last frame decoded to may differ from the
+    /// picture before it, the one of the serial before its own: four numbers,
+    /// the left, top, width and height in samples of a rectangle of the
+    /// planes, the whole picture for a keyframe or a picture not predicted
+    /// from the one before, and a width of 0 where nothing changed. A page
+    /// that has the picture before in its textures need upload only that.
+    pub fn changed(&self) -> *const i32 {
+        self.changed.as_ptr()
     }
 }

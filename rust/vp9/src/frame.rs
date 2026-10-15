@@ -123,6 +123,35 @@ impl Frame {
         (&self.mi, self.mi_cols)
     }
 
+    /// The frame's number in its decoder's count, from 1.
+    pub fn serial(&self) -> u64 {
+        self.serial
+    }
+
+    /// Where the picture may differ from the one frame `serial` decoded to:
+    /// the left, top, width and height in samples of the 64×64 blocks a frame
+    /// after it wrote, clipped to the size to show, and a width of 0 where
+    /// none did. The whole picture where this frame does not come down from
+    /// that one by its LAST references, which every frame since a keyframe
+    /// of the same size does but for one predicted from another.
+    pub fn changed_since(&self, serial: u64) -> [usize; 4] {
+        if serial == 0 || !self.chain.contains(&serial) {
+            return [0, 0, self.width, self.height];
+        }
+        let sb_cols = self.mi_cols.div_ceil(8);
+        let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
+        for (i, _) in self.kept.iter().enumerate().filter(|&(_, &k)| k > serial) {
+            let (col, row) = (i % sb_cols, i / sb_cols);
+            (left, top) = (left.min(col * 64), top.min(row * 64));
+            (right, bottom) = (right.max(col * 64 + 64), bottom.max(row * 64 + 64));
+        }
+        if right == 0 {
+            return [0; 4];
+        }
+        let (right, bottom) = (right.min(self.width), bottom.min(self.height));
+        [left, top, right - left, bottom - top]
+    }
+
     /// A frame of zeros, or an error where the memory has no room for it.
     pub(crate) fn new(width: usize, height: usize) -> Result<Frame> {
         fn zeroed<T: Clone>(len: usize, zero: T) -> Option<Vec<T>> {

@@ -63,14 +63,6 @@ come sooner is the parse:
   ([tried.md](tried.md)). What is left is the boolean's chain itself, and
   `mv_component`, twice as slow under JavaScriptCore as under V8.
 
-- **The damage to the painter.** What changed reaches the decoder, as the
-  active map, and stops there: the page uploads all three planes of every
-  picture to WebGL, 25 MB at 4K for a frame of a kilobyte. The decoder now
-  knows which 64×64 blocks a frame wrote (`Frame::kept`); `picture()` could
-  say so, as a rectangle or as the rows of blocks, and remotex's paint worker
-  upload only that with `texSubImage2D`, or nothing when nothing changed.
-  Likely worth more on an iPad than the decode of such a frame now costs.
-
 ## Not measured
 
 - **An iPhone or iPad.** The Mac on Apple silicon is measured

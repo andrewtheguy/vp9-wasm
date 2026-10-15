@@ -675,6 +675,44 @@ mod tests {
         assert_eq!(keyframes, [0, 7]);
     }
 
+    /// What a frame says changed since the picture before it holds every
+    /// sample that did: outside it, each plane is the last picture's.
+    #[test]
+    fn what_a_frame_says_changed_holds_every_sample_that_did() {
+        let file: &[u8] = include_bytes!("../../../test/data/active-map-330x194.ivf");
+        let mut d = Decoder::new(1);
+        let mut last: Option<Arc<Frame>> = None;
+        let mut rects = Vec::new();
+        let mut at = 32;
+        while at + 12 <= file.len() {
+            let len = u32::from_le_bytes(file[at..at + 4].try_into().unwrap()) as usize;
+            let shown = d.decode(&file[at + 12..at + 12 + len]).unwrap().expect("every frame is shown");
+            at += 12 + len;
+            let f = &shown.frame;
+            let rect = f.changed_since(last.as_ref().map_or(0, |l| l.serial()));
+            let [x, y, w, h] = rect;
+            if let Some(l) = &last {
+                for (plane, before) in f.planes.iter().zip(&l.planes) {
+                    for row in 0..f.height {
+                        for col in 0..f.width {
+                            let inside = (x..x + w).contains(&col) && (y..y + h).contains(&row);
+                            let at = row * plane.stride + col;
+                            assert!(inside || plane.data[at] == before.data[at], "frame {}, ({col}, {row}) outside {rect:?}", rects.len());
+                        }
+                    }
+                }
+            }
+            rects.push(rect);
+            last = Some(shown.frame);
+        }
+        let whole = [0, 0, 330, 194];
+        // The keyframes are whole, and the frames told where the picture
+        // changed are less.
+        assert_eq!((rects[0], rects[7]), (whole, whole));
+        assert!(rects.iter().filter(|&&r| r != whole).count() >= 6, "{rects:?}");
+        assert_eq!(last.unwrap().changed_since(rects.len() as u64), [0; 4]);
+    }
+
     #[test]
     fn a_frame_to_be_shown_at_another_size_is_refused_by_name() {
         let (key, _) = fixture();
