@@ -295,7 +295,9 @@ impl<'a> Tile<'a> {
         } else {
             3
         };
-        self.counts.partition[ctx][p] += 1;
+        if self.f.counting {
+            self.counts.partition[ctx][p] += 1;
+        }
         let subsize = bsize - p as u8;
 
         if hbs == 0 {
@@ -517,7 +519,9 @@ impl<'a> Tile<'a> {
         }
         let ctx = (self.have_above && self.above.skip) as usize + (self.have_left && self.left.skip) as usize;
         let skip = self.r.read(self.f.probs.skip[ctx]);
-        self.counts.skip[ctx][skip as usize] += 1;
+        if self.f.counting {
+            self.counts.skip[ctx][skip as usize] += 1;
+        }
         skip
     }
 
@@ -549,6 +553,7 @@ impl<'a> Tile<'a> {
             }
         }
         match max {
+            _ if !self.f.counting => {}
             1 => self.counts.tx8[ctx][tx as usize] += 1,
             2 => self.counts.tx16[ctx][tx as usize] += 1,
             _ => self.counts.tx32[ctx][tx as usize] += 1,
@@ -598,7 +603,9 @@ impl<'a> Tile<'a> {
 
     fn intra_mode_y(&mut self, group: usize) -> u8 {
         let mode = self.r.tree(&INTRA_MODE_TREE, &self.f.probs.y_mode[group]);
-        self.counts.y_mode[group][mode] += 1;
+        if self.f.counting {
+            self.counts.y_mode[group][mode] += 1;
+        }
         mode as u8
     }
 
@@ -619,7 +626,9 @@ impl<'a> Tile<'a> {
                     (false, false) => 0,
                 };
                 let inter = self.r.read(self.f.probs.intra_inter[ctx]);
-                self.counts.intra_inter[ctx][inter as usize] += 1;
+                if self.f.counting {
+            self.counts.intra_inter[ctx][inter as usize] += 1;
+        }
                 inter
             }
         };
@@ -652,7 +661,9 @@ impl<'a> Tile<'a> {
         mi.sub_mode = sub;
         mi.mode = sub[3];
         let uv = self.r.tree(&INTRA_MODE_TREE, &self.f.probs.uv_mode[mi.mode as usize]);
-        self.counts.uv_mode[mi.mode as usize][uv] += 1;
+        if self.f.counting {
+            self.counts.uv_mode[mi.mode as usize][uv] += 1;
+        }
         mi.uv_mode = uv as u8;
         mi.interp_filter = 3;
         mi.ref_frame = INTRA_FRAME;
@@ -674,7 +685,9 @@ impl<'a> Tile<'a> {
             (false, false) => 2,
         };
         let bit0 = self.r.read(self.f.probs.single_ref[ctx0][0]);
-        self.counts.single_ref[ctx0][0][bit0 as usize] += 1;
+        if self.f.counting {
+            self.counts.single_ref[ctx0][0][bit0 as usize] += 1;
+        }
         if !bit0 {
             return 1;
         }
@@ -699,13 +712,17 @@ impl<'a> Tile<'a> {
             (false, false) => 2,
         };
         let bit1 = self.r.read(self.f.probs.single_ref[ctx1][1]);
-        self.counts.single_ref[ctx1][1][bit1 as usize] += 1;
+        if self.f.counting {
+            self.counts.single_ref[ctx1][1][bit1 as usize] += 1;
+        }
         if bit1 { 3 } else { 2 }
     }
 
     fn inter_mode(&mut self, ctx: usize) -> u8 {
         let mode = self.r.tree(&INTER_MODE_TREE, &self.f.probs.inter_mode[ctx]);
-        self.counts.inter_mode[ctx][mode] += 1;
+        if self.f.counting {
+            self.counts.inter_mode[ctx][mode] += 1;
+        }
         NEARESTMV + mode as u8
     }
 
@@ -814,6 +831,9 @@ impl<'a> Tile<'a> {
         let hp = if usehp { self.r.read(if class == 0 { p.class0_hp } else { p.hp }) as i32 } else { 1 };
         mag += ((d << 3) | (fr << 1) | hp) + 1;
 
+        if !self.f.counting {
+            return if sign { -mag } else { mag };
+        }
         // The counts, as `vp9_inc_mv` has them from the value.
         let c = &mut self.counts.mv[comp];
         c.sign[sign as usize] += 1;
@@ -835,7 +855,9 @@ impl<'a> Tile<'a> {
     /// A coded motion vector: its difference from `best`.
     fn read_mv(&mut self, best: Mv) -> Result<Mv> {
         let joint = self.r.tree(&MV_JOINT_TREE, &self.f.probs.mv_joints);
-        self.counts.mv_joints[joint] += 1;
+        if self.f.counting {
+            self.counts.mv_joints[joint] += 1;
+        }
         let usehp = self.f.h.allow_hp && use_hp(best);
         let (mut row, mut col) = (best.row as i32, best.col as i32);
         if joint == 2 || joint == 3 {
@@ -892,7 +914,9 @@ impl<'a> Tile<'a> {
                 3
             } as usize;
             let filter = self.r.tree(&INTERP_FILTER_TREE, &self.f.probs.interp_filter[ctx]);
+            if self.f.counting {
             self.counts.interp_filter[ctx][filter] += 1;
+        }
             filter as u8
         } else {
             self.f.h.interp_filter
