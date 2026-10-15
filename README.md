@@ -330,6 +330,15 @@ efficiency core fall on every build alike; its instructions are exact and its
 cycles near, and its milliseconds the most moved by the load. A Mac's numbers
 are compared with a Mac's.
 
+`bench/page/serve.ts BUILD...` runs the same samples in a browser: Safari in
+the iOS Simulator (`TARGET=sim`, the default) or on the Mac
+(`TARGET=safari`). It serves a page from `http://localhost`, cross-origin
+isolated, that decodes each sample in a worker with the pool's threads as
+workers of that worker, as remotex's page does, one run a page load, the
+builds alternating round by round; the first round checks every picture
+against libvpx's MD5s. It prints the medians of the mean and the median ms a
+frame after the first. A browser gives time and no counts.
+
 ## Requirements
 
 The page must be cross-origin isolated for `SharedArrayBuffer`, the threads'
