@@ -18,6 +18,38 @@ const EXTEND: [u8; 10] = [NEED_ABOVE | NEED_LEFT, NEED_ABOVE, NEED_LEFT, NEED_AB
 #[repr(align(32))]
 struct Scratch([i16; 1024]);
 
+/// Copies `n` bytes, a transform block's side or two, as loads and stores
+/// of their size: a copy of a size the compiler does not know is a
+/// `memory.copy`, which the engines run as a call, and a copy of each size
+/// it knows by a `match` it would merge back into that.
+#[inline(always)]
+unsafe fn copy_side(src: *const u8, dst: *mut u8, n: usize) {
+    unsafe {
+        match n {
+            4 => (dst as *mut u32).write_unaligned((src as *const u32).read_unaligned()),
+            8 => (dst as *mut u64).write_unaligned((src as *const u64).read_unaligned()),
+            16 => (dst as *mut u128).write_unaligned((src as *const u128).read_unaligned()),
+            32 => (dst as *mut [u128; 2]).write_unaligned((src as *const [u128; 2]).read_unaligned()),
+            _ => std::ptr::copy_nonoverlapping(src, dst, n),
+        }
+    }
+}
+
+/// Sets `n` bytes, a transform block's side, to `v`, as [`copy_side`] copies.
+#[inline(always)]
+unsafe fn fill_side(dst: *mut u8, v: u8, n: usize) {
+    let word = v as u128 * 0x0101_0101_0101_0101_0101_0101_0101_0101;
+    unsafe {
+        match n {
+            4 => (dst as *mut u32).write_unaligned(word as u32),
+            8 => (dst as *mut u64).write_unaligned(word as u64),
+            16 => (dst as *mut u128).write_unaligned(word),
+            32 => (dst as *mut [u128; 2]).write_unaligned([word; 2]),
+            _ => std::ptr::write_bytes(dst, v, n),
+        }
+    }
+}
+
 /// One thread's reconstruction of rows of 64×64 blocks.
 pub(crate) struct Recon<'a> {
     f: &'a FrameCtx<'a>,
@@ -25,6 +57,13 @@ pub(crate) struct Recon<'a> {
     dc: Box<Scratch>,
     /// A reference block with the frame's edge repeated around it.
     mc: Box<[u8; 80 * 80]>,
+    /// The samples an intra block predicts from: the column to its left, and
+    /// the row above it after the one above and to its left. Each block
+    /// writes those of them its mode reads before it reads them, so they are
+    /// not cleared between blocks, which a clear of this size would be a
+    /// `memory.fill` for.
+    left_col: [u8; 32],
+    above_data: [u8; 64 + 16],
     /// The row's coefficients, and how far into them the blocks have got.
     buf: *const RowBuf,
     next_coeff: usize,
@@ -40,7 +79,7 @@ pub(crate) struct Recon<'a> {
 
 impl<'a> Recon<'a> {
     pub fn new(f: &'a FrameCtx<'a>) -> Self {
-        Recon { f, dc: Box::new(Scratch([0; 1024])), mc: Box::new([0; 80 * 80]), buf: std::ptr::null(), next_coeff: 0, mi_row: 0, mi_col: 0, have_above: false, have_left: false, to_right: 0, to_bottom: 0 }
+        Recon { f, dc: Box::new(Scratch([0; 1024])), mc: Box::new([0; 80 * 80]), left_col: [0; 32], above_data: [0; 64 + 16], buf: std::ptr::null(), next_coeff: 0, mi_row: 0, mi_col: 0, have_above: false, have_left: false, to_right: 0, to_bottom: 0 }
     }
 
     /// The 64×64 blocks `cols` of the row `sb_row` of an inter frame, once
@@ -340,8 +379,7 @@ impl<'a> Recon<'a> {
         let y0 = self.mi_row * 8 + row * 4;
         let ext = EXTEND[mode as usize];
 
-        let mut left_col = [0u8; 32];
-        let mut above_data = [0u8; 64 + 16];
+        let (left_col, above_data) = (&mut self.left_col, &mut self.above_data);
         // SAFETY: the samples read are of this frame, above and to the left of
         // a block that starts inside it, and no further right or down than the
         // frame's size in whole 8×8s.
@@ -357,7 +395,7 @@ impl<'a> Recon<'a> {
                         left_col[i] = *dst.add(i.min(have - 1) * stride).sub(1);
                     }
                 } else {
-                    left_col[..bs].fill(129);
+                    fill_side(left_col.as_mut_ptr(), 129, bs);
                 }
             }
 
@@ -365,7 +403,7 @@ impl<'a> Recon<'a> {
                 if up {
                     if self.to_right < 0 {
                         if x0 + bs <= frame_width {
-                            std::ptr::copy_nonoverlapping(above_ref, above_row, bs);
+                            copy_side(above_ref, above_row, bs);
                         } else if x0 <= frame_width {
                             let r = frame_width - x0;
                             std::ptr::copy_nonoverlapping(above_ref, above_row, r);
@@ -374,11 +412,12 @@ impl<'a> Recon<'a> {
                     } else if bs == 4 && right && left {
                         above = above_ref;
                     } else {
-                        std::ptr::copy_nonoverlapping(above_ref, above_row, bs);
+                        copy_side(above_ref, above_row, bs);
                     }
                     *above_row.sub(1) = if left { *above_ref.sub(1) } else { 129 };
                 } else {
-                    std::ptr::write_bytes(above_row.sub(1), 127, bs + 1);
+                    fill_side(above_row, 127, bs);
+                    *above_row.sub(1) = 127;
                 }
             }
 
@@ -387,10 +426,10 @@ impl<'a> Recon<'a> {
                     if self.to_right < 0 {
                         if x0 + 2 * bs <= frame_width {
                             if right && bs == 4 {
-                                std::ptr::copy_nonoverlapping(above_ref, above_row, 2 * bs);
+                                copy_side(above_ref, above_row, 8);
                             } else {
-                                std::ptr::copy_nonoverlapping(above_ref, above_row, bs);
-                                std::ptr::write_bytes(above_row.add(bs), *above_row.add(bs - 1), bs);
+                                copy_side(above_ref, above_row, bs);
+                                fill_side(above_row.add(bs), *above_row.add(bs - 1), bs);
                             }
                         } else if x0 + bs <= frame_width {
                             let r = frame_width - x0;
@@ -409,16 +448,18 @@ impl<'a> Recon<'a> {
                     } else if bs == 4 && right && left {
                         above = above_ref;
                     } else {
-                        std::ptr::copy_nonoverlapping(above_ref, above_row, bs);
+                        copy_side(above_ref, above_row, bs);
                         if bs == 4 && right {
-                            std::ptr::copy_nonoverlapping(above_ref.add(bs), above_row.add(bs), bs);
+                            copy_side(above_ref.add(bs), above_row.add(bs), bs);
                         } else {
-                            std::ptr::write_bytes(above_row.add(bs), *above_row.add(bs - 1), bs);
+                            fill_side(above_row.add(bs), *above_row.add(bs - 1), bs);
                         }
                     }
                     *above_row.sub(1) = if left { *above_ref.sub(1) } else { 129 };
                 } else {
-                    std::ptr::write_bytes(above_row.sub(1), 127, bs * 2 + 1);
+                    fill_side(above_row, 127, bs);
+                    fill_side(above_row.add(bs), 127, bs);
+                    *above_row.sub(1) = 127;
                 }
             }
 
