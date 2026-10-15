@@ -168,9 +168,19 @@ its tables were transcribed from libvpx 1.16.0 (BSD-3-Clause,
   WebGL from the module's shared memory. A picture is held until the page
   releases it by its serial, and the frames after it decode into other
   buffers meanwhile, so the next frame decodes while the page uploads one.
+  `changed` says in four more numbers where the picture may differ from the
+  decoder's picture before it, the rectangle of the 64×64 blocks a frame
+  since that one wrote (`Frame::changed_since`): the whole picture for a
+  keyframe or one predicted from elsewhere, and a width of 0 where nothing
+  changed. A page that holds the picture before in its textures uploads
+  that rectangle alone, and nothing for a quiet desktop's frame.
 - `rust/vp9-bench` is the native harness above. To profile the module itself,
-  run it under `node --perf-prof` and `perf record`: the build keeps the
-  function names. Profiles and logs go under `tmp/`.
+  run it under `node --perf-prof` and `perf record` on Linux, or on a Mac under
+  `samply` with Bun's JavaScriptCore writing a jitdump
+  (`BUN_JSC_useJITDump=1 BUN_JSC_jitDumpDirectory=DIR`) or Node's perf map
+  (`--perf-basic-prof`), as [docs/measurements.md](docs/measurements.md)
+  shows: the build keeps the function names. Profiles and logs go under
+  `tmp/`.
 
 The comparison is on what the remotex gateway itself wrote on 2026-10-08,
 one desktop of four panes, an animation, a page scrolled, a terminal
@@ -319,6 +329,15 @@ builds alternating within each, so that the load and a run put on an
 efficiency core fall on every build alike; its instructions are exact and its
 cycles near, and its milliseconds the most moved by the load. A Mac's numbers
 are compared with a Mac's.
+
+`bench/page/serve.ts BUILD...` runs the same samples in a browser: Safari in
+the iOS Simulator (`TARGET=sim`, the default) or on the Mac
+(`TARGET=safari`). It serves a page from `http://localhost`, cross-origin
+isolated, that decodes each sample in a worker with the pool's threads as
+workers of that worker, as remotex's page does, one run a page load, the
+builds alternating round by round; the first round checks every picture
+against libvpx's MD5s. It prints the medians of the mean and the median ms a
+frame after the first. A browser gives time and no counts.
 
 ## Requirements
 

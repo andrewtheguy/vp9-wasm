@@ -17,7 +17,12 @@ The latest, on the buffers held, are from wlshare's captures of 2026-10-09
 and the samples cut from those as `screen-vp9` 0.0.12 codes them. The
 last section is what a change is judged on now: the scenarios of wlshare's
 captures of 2026-10-13, as `screen-vp9` 0.0.18 codes them. The busy samples
-of every section before it are a flood of text, the worst case.
+of every section before it are a flood of text, the worst case. The walk's
+numbers are of its first 120 frames, the walk down alone, of a capture that
+stopped the video and settled on black (the artifacts drive's
+`archive/bench-walk-stopped/`), but for the walk's rows of what was kept,
+which are of the walk captured again on 2026-10-15, all 174 frames of it:
+down, back up and settled on the playing video.
 
 ## Where the time goes
 
@@ -699,9 +704,171 @@ So on the target the most the module takes more is its prediction from the
 reference and the copy beside it: 3 to 6 M cycles of a 4K video frame, 2
 to 4 of the walk's and the browser's, and 3 M more under Bun than under
 Node on the video, where the same module's kernels are compiled by the two
-engines for the same ARM. Then what the parts measured leave of the gap,
-which is the tokens and the modes, which no build can leave out: on the 4K
-video 3 M under Bun and 5 under Node, on the browser 4 under Bun and 7
-under Node. Then the loop filter under 2048 wide, 1.8 M more than libvpx's
-at 1920×1080; intra prediction, 1.1 to 1.8 M more at 4K; and the
-transforms, 0.5 to 1.4.
+engines for the same ARM. Then the loop filter under 2048 wide, 1.8 M more
+than libvpx's at 1920×1080; intra prediction, 1.1 to 1.8 M more at 4K; and
+the transforms, 0.5 to 1.4. Measured again below, the parse, tokens and
+modes together, is not part of the gap: it is level with libvpx's or less.
+
+## On the target again: where the time goes, and four threads
+
+Measured on 2026-10-15 on the same M2 Max, macOS idle but for the runs,
+Bun 1.4.2 and Node 24.18 against ffmpeg 9.0.1's libvpx-vp9, by
+`bench/run.sh`: the base, release 0.0.11, against a copy of itself was 0.0%
+to 0.6% apart over five rounds, which is the noise. One thread, M cycles a
+frame, the base under Bun, Node and libvpx:
+
+| | Bun | Node | libvpx |
+|---|---|---|---|
+| terminal 1440×900 | 3.2 | 1.9 | 1.1 |
+| terminal 3840×2160 | 4.7 | 3.3 | 9.8 |
+| video 1280×800 | 19.7 | 17.8 | 14.0 |
+| video 1920×1080 | 30.3 | 28.5 | 23.1 |
+| video 2560×1600, no filter | 41.7 | 39.6 | 34.3 |
+| video 3840×2160, no filter | 67.2 | 64.5 | 56.0 |
+| walk 1920×1080 | 23.4 | 21.5 | 16.1 |
+| walk 3840×2160, no filter | 51.1 | 48.8 | 40.6 |
+| browser 3840×2160, no filter | 50.7 | 54.6 | 41.2 |
+| flood 1920×1080 | 348.8 | 381.1 | 360.1 |
+
+What each part costs, as the cycles a frame a build saves that leaves it
+out (which changes the picture, so the costs are near and not exact), and
+libvpx's as its share of the decoding thread under macOS's `sample` times
+its cycles. "The rest" is the frame less reconstruction and the loop filter:
+the parse, tokens and modes, and the frame's own work.
+
+| M cycles | video 1920×1080, Bun / Node / libvpx | video 3840×2160, Bun / Node / libvpx | walk 3840×2160, Bun | browser 3840×2160, Bun |
+|---|---|---|---|---|
+| the frame | 30.3 / 28.5 / 23.1 | 67.4 / 64.8 / 56.0 | 50.9 | 50.6 |
+| prediction from the reference, with its copies | 4.3 / 3.5 / 2.0 | 17.8 / 14.7 / 11.4 | 15.0 | 11.6 |
+| the row copy | 0.6 / 0.5 | 1.5 / 1.6 | 1.4 | 1.8 |
+| the loop filter | 6.7 / 6.5 / 3.8 | | | |
+| of it, the masks | 0.8 / 0.7 | | | |
+| the transforms | 4.3 / 3.7 / 0.65 | 4.8 / 3.9 / 1.7 | 3.2 | 0.8 |
+| intra prediction, with its edges | 0.7 / 0.2 / 0.2 | 2.8 / 2.8 / 1.2 | 3.1 | 5.2 |
+| all of reconstruction | 10.9 / 9.3 | 30.0 / 26.5 | 25.6 | 21.6 |
+| the rest | 12.7 / 12.7 / 16.4 | 37.4 / 38.3 / 41.6 | 25.3 | 29.0 |
+
+The `ModeInfo` written twice into the grid adds 0.2 M cycles at 1920×1080
+and 0.8 to 1.4 at 4K, which is what writing it once costs. On the 4K video
+libvpx's tokens alone are 28.4 M of its 41.6.
+
+So on one thread the whole of the gap to libvpx is reconstruction and the
+loop filter, and the parse is level with libvpx's or less. On four threads,
+as the page decodes, it is the other way: a frame waits on its tile
+columns' parsing. Under Bun, leaving all of reconstruction out takes 6% to
+9% off a frame's time on four threads (1280×800 2.94 ms to 2.68, 1920×1080
+2.82 to 2.65, 3840×2160 5.96 to 5.57) and leaving the loop filter out
+nothing; profiled, the two threads that parse the 1920×1080 video's two
+columns are busy nine tenths of the time and the two that reconstruct and
+filter three quarters.
+
+**A profile of the module under each engine.** JavaScriptCore writes a
+jitdump that `samply` reads on macOS, and V8 a perf map:
+
+```sh
+BUN_JSC_useJITDump=1 BUN_JSC_jitDumpDirectory=tmp/prof VP9_WASM_DIR=build/out \
+  samply record --save-only -o tmp/prof/bun.json.gz -- bun bench/decode.ts FILE 1
+VP9_WASM_DIR=build/out samply record --save-only -o tmp/prof/node.json.gz -- \
+  node --perf-basic-prof bench/decode.ts FILE 1
+```
+
+and `BUN_JSC_useConcurrentJIT=0 BUN_JSC_dumpOMGDisassembly=1` prints each
+function's B3 and Air as JavaScriptCore's top tier compiles it, Air being
+ARM's instructions but for the registers' last assignment. Samples a
+function took on the 4K video, Bun against Node, at the same rate, about
+3,050 a run:
+
+| function | Bun | Node |
+|---|---|---|
+| `decode_coefs` of a 4×4 | 501 | 513 |
+| `convolve::simd128::both::<16>` | 327 | 267 |
+| `Tile::tokens` of a 4×4 | 174 | 213 |
+| `Recon::block` | 156 | 138 |
+| `itx::inverse_add` | 81 | 64 |
+| `BoolDecoder::tree` | 78 | 115 |
+| `Tile::mv_component` | 57 | 29 |
+| `Recon::predict_inter_block` | 42 | 26 |
+
+Bun runs fewer instructions than Node, 237 M a 4K video frame against
+255 M, and takes more cycles: JavaScriptCore's code issues 3.5 a cycle,
+V8's 3.9. The largest difference is the 2-D filter, whose every tap
+JavaScriptCore compiles as a multiply and an add where V8 makes one `mla`:
+`both::<16>` at 16×16 in cache is 140 ns a call under Bun and 112 under
+Node. JavaScriptCore does fuse `i16x8.add` with `i16x8.extmul_*_i8x16_s`
+into one `smlal`, but LLVM does not leave the `extmul` of a hoisted tap
+([tried.md](tried.md)).
+
+**Threads.** Mean ms a frame of the base, Bun / Node:
+
+| | 1 | 2 | 4 | 6 | 8 |
+|---|---|---|---|---|---|
+| video 1920×1080 | 7.96 / 7.95 | 4.40 / 4.21 | 2.83 / 3.04 | 2.92 / 3.05 | 3.03 / 3.20 |
+| video 2560×1600 | 11.37 / 11.19 | 6.01 / 5.87 | 3.80 / 3.97 | 3.88 / 4.03 | 4.00 / 4.10 |
+| video 3840×2160 | 18.91 / 18.66 | 9.96 / 9.67 | 5.97 / 6.20 | 5.95 / 6.18 | 6.13 / 6.22 |
+| browser 3840×2160 | 14.23 / 15.65 | 7.79 / 8.50 | 4.65 / 5.33 | 3.91 / 4.45 | 4.08 / 4.33 |
+
+Past four threads the video gains nothing, its four columns parsed; the
+browser gains 16% at six. Eight are a little slower than six on every
+sample.
+
+**What an iPhone or iPad may do differently.** JavaScriptCore told to check
+every access against the memory's bounds (`BUN_JSC_useWasmFastMemory=0`),
+as iOS may for a shared memory: 11% more cycles on one thread (the 4K video
+67.6 M to 75.0, the 1920×1080 30.4 to 33.8) for 50% more instructions, 7%
+to 10% on four threads. The process clamped to utility QoS
+(`taskpolicy -c utility`) ran on the performance cores as before, and to
+background QoS 6.5 times slower, which throttles the clock as well, so
+neither stands in for an iPhone's efficiency cores.
+
+**What was kept.** Intra prediction a function of its own, the transforms'
+kernels functions of their own, an intra block's edges gathered without a
+`memory.copy` or `memory.fill` of a length the compiler does not know, a
+tree's symbol read inlined, the modes counted only in a frame that adapts,
+and `ModeInfo` in 16 bytes for 34: the six together against the base, five
+rounds (`bench/run.sh`), M cycles a frame on one thread and mean ms on four,
+base → now:
+
+| | Bun, one thread | Node, one thread | Bun, four threads | Node, four threads | libvpx, one / four |
+|---|---|---|---|---|---|
+| terminal 1440×900 | 3.2 → 2.6 | 1.8 → 1.8 | 0.26 → 0.23 | 0.23 → 0.20 | 1.1 / 0.24 |
+| video 1280×800 | 19.8 → 18.9 | 17.8 → 17.6 | 3.00 → 2.94 | 3.13 → 3.06 | 14.1 / 3.61 |
+| video 1920×1080 | 30.3 → 29.2 | 28.5 → 28.0 | 2.86 → 2.80 | 2.97 → 2.91 | 23.0 / 4.06 |
+| video 2560×1600, no filter | 41.8 → 40.3 | 39.7 → 38.6 | 3.90 → 3.85 | 4.04 → 3.95 | 34.3 / 4.87 |
+| video 3840×2160, no filter | 67.4 → 65.1 | 64.7 → 62.5 | 6.11 → 6.06 | 6.33 → 6.23 | 56.2 / 8.11 |
+| walk 1920×1080, all 174 frames | 20.2 → 19.5 | 19.0 → 18.5 | 1.80 → 1.77 | 1.91 → 1.82 | 13.7 / 2.31 |
+| walk 3840×2160, all 174 frames, no filter | 44.6 → 43.0 | 43.1 → 41.2 | 4.08 → 3.98 | 4.02 → 3.93 | 35.3 / 4.71 |
+| browser 3840×2160, no filter | 50.6 → 48.0 | 54.4 → 50.4 | 4.85 → 4.61 | 5.12 → 4.92 | 41.2 / 4.74 |
+| flood 1920×1080 | 354.2 → 347.9 | 389.7 → 380.9 | 46.08 → 45.91 | 51.52 → 51.24 | 366.2 / 54.71 |
+
+Under Bun a fifth fewer cycles on the quiet terminal, which is the engine's
+tier-up of smaller functions, and 3.4% to 5.1% on every busy sample but the
+flood's 1.8%; under Node up to 7.4%. On four threads, which wait on the
+parse, 1% to 5% faster. Nothing is slower. The walk's rows are of its
+settled sample, measured again on 2026-10-15, Node's on one thread from
+seven rounds: five, at a load of 8.7, had them level, and the same two
+builds on the walk down alone had 51.1 → 48.6 under Bun and 48.8 → 46.1
+under Node at 4K.
+
+**The upload a quiet frame saves.** Three R8 planes of 3840×2160 uploaded
+with `texSubImage2D` from a buffer of the planes, in Playwright's WebKit
+and Chromium on the same Mac, ms a frame with `finish`: the whole picture
+1.6 in WebKit and 1.3 in Chromium; a 128×128 rectangle of each plane 0.13
+and 0.01 given by the offset of its first sample, but 0.50 in WebKit given
+by `UNPACK_SKIP_PIXELS` and `UNPACK_SKIP_ROWS`.
+
+**The same module in Safari.** `bench/page/serve.ts` on the same M2 Max,
+the base against what was kept, three rounds, one thread, mean ms a frame
+after the first: Safari 27.0 on the Mac and Safari 26.2 in the iOS
+Simulator, which runs on the Mac's cores, beside Bun's from `bench/run.sh`
+(five rounds).
+
+| | Bun | Safari 27.0 | iOS Simulator's Safari 26.2 |
+|---|---|---|---|
+| terminal 1440×900 | 0.27 → 0.25 | 0.27 → 0.25 | 0.30 → 0.27 |
+| video 1280×800 | 4.82 → 4.71 | 4.90 → 4.80 | 5.08 → 4.92 |
+| video 1920×1080 | 7.95 → 7.76 | 7.99 → 7.82 | 8.31 → 8.14 |
+
+The three decode within a few percent of one another and agree on what the
+change gains, so Bun measures what Safari runs. An iPhone's Safari 26.6.1
+takes the same WebAssembly features as the Simulator's
+([remaining.md](remaining.md)).

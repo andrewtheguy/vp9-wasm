@@ -54,6 +54,8 @@ pub(crate) struct FrameCtx<'a> {
     /// The three references' planes, at this frame's size and stride.
     pub refs: [[*const u8; 3]; 3],
     pub mi: *mut ModeInfo,
+    /// The sub-blocks of each block under 8×8, by its cell, as `mi` is.
+    pub sub: *mut SubBlocks,
     /// The previous frame's modes, when its motion vectors are candidates.
     pub prev_mi: *const ModeInfo,
     pub seg: Segments,
@@ -295,7 +297,9 @@ impl<'a> Tile<'a> {
         } else {
             3
         };
-        self.counts.partition[ctx][p] += 1;
+        if self.f.counting {
+            self.counts.partition[ctx][p] += 1;
+        }
         let subsize = bsize - p as u8;
 
         if hbs == 0 {
@@ -517,7 +521,9 @@ impl<'a> Tile<'a> {
         }
         let ctx = (self.have_above && self.above.skip) as usize + (self.have_left && self.left.skip) as usize;
         let skip = self.r.read(self.f.probs.skip[ctx]);
-        self.counts.skip[ctx][skip as usize] += 1;
+        if self.f.counting {
+            self.counts.skip[ctx][skip as usize] += 1;
+        }
         skip
     }
 
@@ -549,6 +555,7 @@ impl<'a> Tile<'a> {
             }
         }
         match max {
+            _ if !self.f.counting => {}
             1 => self.counts.tx8[ctx][tx as usize] += 1,
             2 => self.counts.tx16[ctx][tx as usize] += 1,
             _ => self.counts.tx32[ctx][tx as usize] += 1,
@@ -563,8 +570,8 @@ impl<'a> Tile<'a> {
         mi.tx_size = self.tx_size(mi.sb_type, true);
         mi.ref_frame = INTRA_FRAME;
         mi.interp_filter = 3;
-        let above = if self.have_above { self.above.sub_mode } else { [0; 4] };
-        let left = if self.have_left { self.left.sub_mode } else { [0; 4] };
+        let above = if self.have_above { self.sub_modes(&self.above, self.mi_row - 1, self.mi_col) } else { [0; 4] };
+        let left = if self.have_left { self.sub_modes(&self.left, self.mi_row, self.mi_col - 1) } else { [0; 4] };
         let read = |t: &mut Self, sub: &[u8; 4], b: usize| {
             let a = if b < 2 { above[b + 2] } else { sub[b - 2] };
             let l = if b & 1 == 0 { left[b + 1] } else { sub[b - 1] };
@@ -591,14 +598,16 @@ impl<'a> Tile<'a> {
             }
             _ => sub = [read(self, &sub, 0); 4],
         }
-        mi.sub_mode = sub;
+        self.set_sub_modes(mi, sub);
         mi.mode = sub[3];
         mi.uv_mode = self.r.tree(&INTRA_MODE_TREE, &KF_UV_MODE_PROBS[mi.mode as usize]) as u8;
     }
 
     fn intra_mode_y(&mut self, group: usize) -> u8 {
         let mode = self.r.tree(&INTRA_MODE_TREE, &self.f.probs.y_mode[group]);
-        self.counts.y_mode[group][mode] += 1;
+        if self.f.counting {
+            self.counts.y_mode[group][mode] += 1;
+        }
         mode as u8
     }
 
@@ -619,7 +628,9 @@ impl<'a> Tile<'a> {
                     (false, false) => 0,
                 };
                 let inter = self.r.read(self.f.probs.intra_inter[ctx]);
-                self.counts.intra_inter[ctx][inter as usize] += 1;
+                if self.f.counting {
+            self.counts.intra_inter[ctx][inter as usize] += 1;
+        }
                 inter
             }
         };
@@ -649,10 +660,12 @@ impl<'a> Tile<'a> {
             }
             b => sub = [self.intra_mode_y(SIZE_GROUP[b as usize] as usize); 4],
         }
-        mi.sub_mode = sub;
+        self.set_sub_modes(mi, sub);
         mi.mode = sub[3];
         let uv = self.r.tree(&INTRA_MODE_TREE, &self.f.probs.uv_mode[mi.mode as usize]);
-        self.counts.uv_mode[mi.mode as usize][uv] += 1;
+        if self.f.counting {
+            self.counts.uv_mode[mi.mode as usize][uv] += 1;
+        }
         mi.uv_mode = uv as u8;
         mi.interp_filter = 3;
         mi.ref_frame = INTRA_FRAME;
@@ -674,7 +687,9 @@ impl<'a> Tile<'a> {
             (false, false) => 2,
         };
         let bit0 = self.r.read(self.f.probs.single_ref[ctx0][0]);
-        self.counts.single_ref[ctx0][0][bit0 as usize] += 1;
+        if self.f.counting {
+            self.counts.single_ref[ctx0][0][bit0 as usize] += 1;
+        }
         if !bit0 {
             return 1;
         }
@@ -699,14 +714,57 @@ impl<'a> Tile<'a> {
             (false, false) => 2,
         };
         let bit1 = self.r.read(self.f.probs.single_ref[ctx1][1]);
-        self.counts.single_ref[ctx1][1][bit1 as usize] += 1;
+        if self.f.counting {
+            self.counts.single_ref[ctx1][1][bit1 as usize] += 1;
+        }
         if bit1 { 3 } else { 2 }
     }
 
     fn inter_mode(&mut self, ctx: usize) -> u8 {
         let mode = self.r.tree(&INTER_MODE_TREE, &self.f.probs.inter_mode[ctx]);
-        self.counts.inter_mode[ctx][mode] += 1;
+        if self.f.counting {
+            self.counts.inter_mode[ctx][mode] += 1;
+        }
         NEARESTMV + mode as u8
+    }
+
+    /// The sub-blocks at the cell (`row`, `col`).
+    #[inline(always)]
+    fn sub_at(&self, row: usize, col: usize) -> *mut SubBlocks {
+        // SAFETY: the callers' cells are inside the frame.
+        unsafe { self.f.sub.add(row * self.f.mi_cols + col) }
+    }
+
+    /// The four sub-blocks' modes of the block `mi` at the cell (`row`,
+    /// `col`): its own four times over for a block of 8×8 or more.
+    #[inline(always)]
+    fn sub_modes(&self, mi: &ModeInfo, row: usize, col: usize) -> [u8; 4] {
+        // SAFETY: a block under 8×8 has written its cell's in this frame.
+        if mi.sb_type < BLOCK_8X8 { unsafe { (*self.sub_at(row, col)).mode } } else { [mi.mode; 4] }
+    }
+
+    /// Keeps the sub-blocks' modes of the block being parsed, where it is
+    /// under 8×8.
+    #[inline(always)]
+    fn set_sub_modes(&mut self, mi: &ModeInfo, sub: [u8; 4]) {
+        if mi.sb_type < BLOCK_8X8 {
+            // SAFETY: the block's one cell, inside the frame and this tile's.
+            unsafe { (*self.sub_at(self.mi_row, self.mi_col)).mode = sub };
+        }
+    }
+
+    /// Sub-block `k`'s motion vector of the candidate `c` at `pos` from the
+    /// block being parsed: its own for a block of 8×8 or more.
+    #[inline(always)]
+    fn sub_mv(&self, c: &ModeInfo, pos: (i8, i8), k: usize) -> Mv {
+        if c.sb_type >= BLOCK_8X8 {
+            return c.mv;
+        }
+        let row = (self.mi_row as isize + pos.0 as isize) as usize;
+        let col = (self.mi_col as isize + pos.1 as isize) as usize;
+        // SAFETY: `candidate` found the cell inside the frame and this tile,
+        // and a block under 8×8 has written its cell's in this frame.
+        unsafe { (*self.sub_at(row, col)).mv[k & 3] }
     }
 
     /// The cell `pos` away, when it is in the frame and in this tile.
@@ -759,7 +817,7 @@ impl<'a> Tile<'a> {
                     if c.ref_frame == ref_frame {
                         // The two nearest give the sub-block beside this one.
                         if i < 2 && block >= 0 {
-                            add!(c.sub_mv[IDX_N_COLUMN_TO_SUBBLOCK[block as usize][(pos.1 == 0) as usize]]);
+                            add!(self.sub_mv(c, pos, IDX_N_COLUMN_TO_SUBBLOCK[block as usize][(pos.1 == 0) as usize]));
                         } else {
                             add!(c.mv);
                         }
@@ -814,6 +872,9 @@ impl<'a> Tile<'a> {
         let hp = if usehp { self.r.read(if class == 0 { p.class0_hp } else { p.hp }) as i32 } else { 1 };
         mag += ((d << 3) | (fr << 1) | hp) + 1;
 
+        if !self.f.counting {
+            return if sign { -mag } else { mag };
+        }
         // The counts, as `vp9_inc_mv` has them from the value.
         let c = &mut self.counts.mv[comp];
         c.sign[sign as usize] += 1;
@@ -835,7 +896,9 @@ impl<'a> Tile<'a> {
     /// A coded motion vector: its difference from `best`.
     fn read_mv(&mut self, best: Mv) -> Result<Mv> {
         let joint = self.r.tree(&MV_JOINT_TREE, &self.f.probs.mv_joints);
-        self.counts.mv_joints[joint] += 1;
+        if self.f.counting {
+            self.counts.mv_joints[joint] += 1;
+        }
         let usehp = self.f.h.allow_hp && use_hp(best);
         let (mut row, mut col) = (best.row as i32, best.col as i32);
         if joint == 2 || joint == 3 {
@@ -892,7 +955,9 @@ impl<'a> Tile<'a> {
                 3
             } as usize;
             let filter = self.r.tree(&INTERP_FILTER_TREE, &self.f.probs.interp_filter[ctx]);
+            if self.f.counting {
             self.counts.interp_filter[ctx][filter] += 1;
+        }
             filter as u8
         } else {
             self.f.h.interp_filter
@@ -908,7 +973,6 @@ impl<'a> Tile<'a> {
                     if mode == NEWMV { self.read_mv(best)? } else { best }
                 }
             };
-            mi.sub_mv = [mi.mv; 4];
             return Ok(());
         }
 
@@ -918,6 +982,7 @@ impl<'a> Tile<'a> {
         let (num_w, num_h) = (1usize << self.sub_wl, 1usize << self.sub_hl);
         let mut best_new = None;
         let mut mode = ZEROMV;
+        let mut sub_mv = [Mv::default(); 4];
         for idy in (0..2).step_by(num_h) {
             for idx in (0..2).step_by(num_w) {
                 let j = idy * 2 + idx;
@@ -925,7 +990,7 @@ impl<'a> Tile<'a> {
                 let mv = match mode {
                     NEARESTMV | NEARMV => {
                         let near = mode == NEARMV;
-                        let b = &mi.sub_mv;
+                        let b = sub_mv;
                         match j {
                             0 => self.find_mv_refs(bsize, mi.ref_frame, 0)[near as usize],
                             1 | 2 if !near => b[0],
@@ -947,17 +1012,19 @@ impl<'a> Tile<'a> {
                     }
                     _ => Mv::default(),
                 };
-                mi.sub_mv[j] = mv;
+                sub_mv[j] = mv;
                 if num_h == 2 {
-                    mi.sub_mv[j + 2] = mv;
+                    sub_mv[j + 2] = mv;
                 }
                 if num_w == 2 {
-                    mi.sub_mv[j + 1] = mv;
+                    sub_mv[j + 1] = mv;
                 }
             }
         }
         mi.mode = mode;
-        mi.mv = mi.sub_mv[3];
+        mi.mv = sub_mv[3];
+        // SAFETY: the block's one cell, inside the frame and this tile's.
+        unsafe { (*self.sub_at(self.mi_row, self.mi_col)).mv = sub_mv };
         Ok(())
     }
 
@@ -1012,7 +1079,7 @@ impl<'a> Tile<'a> {
                         let mut eob = 0;
                         if more {
                             let tx_type = if intra_luma && plane == 0 {
-                                INTRA_TX_TYPE[(if mi.sb_type < BLOCK_8X8 { mi.sub_mode[((row << 1) + col) & 3] } else { mi.mode }).min(9) as usize] as usize
+                                INTRA_TX_TYPE[(if mi.sb_type < BLOCK_8X8 { (*self.sub_at(self.mi_row, self.mi_col)).mode[((row << 1) + col) & 3] } else { mi.mode }).min(9) as usize] as usize
                             } else {
                                 0
                             };

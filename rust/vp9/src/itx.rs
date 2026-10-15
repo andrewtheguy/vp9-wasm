@@ -460,6 +460,20 @@ pub unsafe fn inverse_add(
             (2, t) => return simd128::add_16x16(t, coeffs.as_ptr(), eob, dst, stride),
             _ => {}
         }
+        plain(tx_size, tx_type, coeffs, eob, dst, stride)
+    }
+}
+
+/// `inverse_add`'s transforms in plain code, apart from it so that its own
+/// code stays small: JavaScriptCore compiles each call's entry into a
+/// function by the size of the function.
+///
+/// # Safety
+/// As `inverse_add`'s, of a block that is not lossless nor a DC alone.
+#[inline(never)]
+unsafe fn plain(tx_size: usize, tx_type: usize, coeffs: &[i16], eob: usize, dst: *mut u8, stride: usize) {
+    // SAFETY: the caller's.
+    unsafe {
         match (tx_size, tx_type) {
             (0, 0) => add_2d(coeffs, 4, 4, idct4, idct4, dst, stride),
             (0, 1) => add_2d(coeffs, 4, 4, idct4, iadst4, dst, stride),

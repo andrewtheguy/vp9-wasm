@@ -176,8 +176,9 @@ impl<'a> BoolDecoder<'a> {
     }
 
     /// A symbol of a tree whose leaves are zero or negative, as libvpx's
-    /// `vpx_read_tree`.
-    #[inline]
+    /// `vpx_read_tree`. Inlined, so that the window stays in the caller's
+    /// locals rather than being stored for the call and loaded again.
+    #[inline(always)]
     pub fn tree(&mut self, tree: &[i8], probs: &[u8]) -> usize {
         let mut i = 0usize;
         loop {

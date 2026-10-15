@@ -9,96 +9,88 @@ and found no faster in [tried.md](tried.md).
 
 Judged on the terminal and the video of wlshare's captures and on its other
 scenarios, as `screen-vp9` 0.0.18 codes them, on an M2 Max, the target,
-under Bun and Node, Safari's engine and Chrome's
-([measurements.md](measurements.md)); the flood of text is the worst case a
-desktop can be, measured for reference and no target, and x86 is the next
-target. On one thread the module takes a sixth to two fifths more cycles a
-frame than libvpx on the video, the walk and the browser, and is level on
-the flood; on four threads, as the page decodes, it is faster than libvpx
-by a sixth to a quarter on every video and the walk, and level on the
-browser under Bun and an eighth behind under Node. What it takes more is
-below, each part's cost measured by a build that leaves it out (which
-changes the picture, so the costs are near and not exact) and set beside
-libvpx's share of its samples under macOS's `sample`. In the order the work
-would go, the largest first:
+under Bun and Node, Safari's engine and Chrome's, measured again on
+2026-10-15 ([measurements.md](measurements.md)): each part's cost by a build
+that leaves it out, beside libvpx's share under macOS's `sample`, and each
+function's under `samply` with the engines' JIT dumps. On one thread the
+module takes a fifth to two fifths more cycles than libvpx on the video,
+the walk and the browser, and the whole of that is reconstruction and the
+loop filter: the parse, tokens and modes together, is level with libvpx's
+or faster (37.4 M cycles of a 4K video frame against 41.6). In the order
+the work would go, the largest first:
 
 - **Prediction from the reference.** 17.5 M cycles of a 4K video frame
-  under Bun and 14.4 under Node, where libvpx's is 12.4, and the row copy
-  beside it 0.7 to 1.4 M, which libvpx's figure takes in; 2 to 4 M more
-  than libvpx's on the walk and the browser. The 3 M a 4K video frame more
-  under Bun than under Node is the same kernels compiled by the two engines
-  for the same ARM, and Safari's is the target: JavaScriptCore's ARM code
-  for `convolve` is the first thing to read, as its x86 code was for the
-  loop filter. libvpx on the M2 runs its `i8mm` kernels, whose dot products
-  of bytes WebAssembly has no equal of, and relaxed SIMD's dot product
-  takes signed 7-bit factors, which neither the samples nor the taps are;
-  on x86 a row of eight samples is sixteen multiplies and sixteen adds
-  either way, whether the eight rows down are loaded or kept in registers
-  (keeping them gave 2%).
-- **`ModeInfo` smaller, and the block's walk.** What the parts measured
-  leave of the gap is the tokens and the modes: on the 4K video 3 M cycles
-  under Bun and 5 under Node, on the browser 4 under Bun and 7 under Node,
-  where Node takes 8% more of the whole frame than Bun. On x86 the modes
-  were 33 M cycles of the browser's 4K frame where libvpx's were 25, and
-  `Tile::block` 31% of a quiet 4K frame. The parse of a 64×64 block in the
-  inactive segment is mostly the 34-byte `ModeInfo` written to its 64
-  cells: 2 KB a block, 4 MB a 4K frame. Only a block under 8×8 has four
-  motion vectors and four modes, and those could live in a table of their
-  own by cell, `mv` is always `sub_mv[3]` and `mode` always `sub_mode[3]`,
-  so the record could be 16 bytes. The motion vectors' candidates and the
-  mode trees were 6% each of the browser's frame on x86.
-- **The loop filter, under 2048 wide.** 6.8 M cycles of a 1920×1080 video
-  frame under Bun and 6.6 under Node, where libvpx's is 4.9, since its
-  narrow and 8-sample edges went two to a call as libvpx's `_dual` kernels
-  take them, which made a filtered video frame 5% to 8% faster on the M2
-  Max. The 16-sample edges are still one at a time, and on the video nine
-  in ten of them leave early. The masks settled as the blocks are parsed,
-  as hevc-wasm's boundary strengths are, remain the smaller part.
-- **Intra prediction in plain code.** 2.4 M cycles of the 4K video frame
-  under Bun and 1.9 under Node where libvpx's is 1.3, 3.0 and 2.6 of the
-  walk's for 1.7, 4.5 and 4.6 of the browser's for 2.8.
-- **The transforms.** 3.4 M cycles of a 4K video frame under Bun and 2.5
-  under Node where libvpx's are 2.0, now that the 8- and 16-point
-  transforms run in vectors, short DCTs over their top-left corner alone
-  and a DC alone as a saturating add of bytes. On x86 a replay of the
-  video's blocks gave 97 cycles a block, mostly the 4×4 DCT, 28% of the
-  blocks at 73 cycles, of which the kernel is some 150 instructions: V8 there
-  makes each vector constant again at each use, takes the low halves of
-  32-bit lanes in four instructions, and gives the multiply that rounds a
-  fixup of four; the call and the dispatch are some 60 instructions a
-  block. The 32-point DCT, which the video has none of, is in plain code.
-- **Token parsing** is 47% to 49% of libvpx's video frame on the M2 Max and
-  33% to 39% of the walk's and the browser's; on x86 it was 29% to 30% of
-  the module's video frame, where it is two thirds of the flood's. Both
-  decoders sit on the boolean's chain there, which no layout of the loop
-  shortens, and on x86 the module was level; on the M2 no build can leave
-  it out, and with the modes it is what the parts leave of the gap, above.
-  The token's probability by a table of offsets was no faster on an M2
-  ([tried.md](tried.md)).
-- **The damage to the painter.** What changed reaches the decoder, as the
-  active map, and stops there: the page uploads all three planes of every
-  picture to WebGL, 25 MB at 4K for a frame of a kilobyte. The decoder now
-  knows which 64×64 blocks a frame wrote (`Frame::kept`); `picture()` could
-  say so, as a rectangle or as the rows of blocks, and remotex's paint worker
-  upload only that with `texSubImage2D`, or nothing when nothing changed.
-  Likely worth more on an iPad than the decode of such a frame now costs.
+  under Bun and 14.7 under Node, where libvpx's is 11.4; 4.3 against 2.0
+  at 1920×1080. The 2-D filter at 16 wide alone is a seventh of a 4K
+  frame's time under Bun, and 22% more under Bun than under Node: in
+  JavaScriptCore's ARM code every tap is a multiply and an add, where V8
+  makes one `mla`. JavaScriptCore does make one `smlal` of an add and an
+  `extmul` of bytes, which LLVM undoes for a hoisted tap
+  ([tried.md](tried.md)); a JavaScriptCore that fused `i16x8.add` with
+  `i16x8.mul` would give it for nothing, and is worth raising with WebKit.
+- **The transforms.** 4.8 M cycles of the 4K video frame under Bun where
+  libvpx's are 1.7: some 100,000 transform blocks a frame, 54,000 of them a
+  DC alone and most of the rest 4×4 with a few coefficients, so about 48
+  cycles a block against libvpx's 17, mostly what a block costs to reach
+  its kernel: the walk's dispatch, the reads of its coefficients and the
+  frame each call takes on the shadow stack.
+- **The loop filter, under 2048 wide.** 6.7 M cycles of a 1920×1080 video
+  frame under Bun and 6.5 under Node, where libvpx's is 3.8; the masks are
+  0.8 of it, the walk 0.9, and the vertical kernels twice the horizontal.
+- **Intra prediction.** 2.8 M cycles of the 4K video frame and 5.2 of the
+  browser's, libvpx's 1.2 of the video's: the predictors themselves are
+  cheap (in vectors, no faster), and what costs is each block's chain of
+  gathering its edges from the block it follows, predicting and adding the
+  residual. The predictors are a function of their own now and the edges
+  gathered without `memory.copy`, which took 1% to 3.5% off the frame.
+- **The walk over a block's transform blocks.** What reconstruction costs
+  beyond its parts, about 4.6 M cycles of the 4K video frame.
+
+On four threads, as the page decodes, every sample waits on its columns'
+parsing: leaving all of reconstruction out takes 6% to 9% off a frame's
+time and the loop filter nothing. So what reconstruction saves is the
+CPU's time, which on an iPhone is its battery, and what would make a frame
+come sooner is the parse:
+
+- **The parse.** Level with libvpx's on one thread, and on four threads the
+  time a frame takes: `decode_coefs` and `tokens` are three quarters of a
+  parsing thread's time, and JavaScriptCore runs them as fast as V8 or
+  faster. A tree's symbol read inlined into its caller, the modes counted
+  only in a frame that adapts, and `ModeInfo` in 16 bytes for 34 took 1%
+  to 3% off between them; the window to `large_token` by value, the split
+  by `range - 1` and `256 - prob` from a table, and the first boolean's
+  context in a local are each no faster on the M2 again
+  ([tried.md](tried.md)). What is left is the boolean's chain itself, and
+  `mv_component`, twice as slow under JavaScriptCore as under V8.
 
 ## Not measured
 
-- **An iPhone or iPad.** The Mac on Apple silicon is measured
-  ([measurements.md](measurements.md)): on an M2 under Bun, whose
-  JavaScriptCore is Safari's, a frame of the flood is three quarters token
-  parsing, waiting on the boolean's chain, and the module is level with
-  libvpx's NEON build on one thread (`bench/run.sh`, and what was tried
-  there in [tried.md](tried.md)). The memory is fast memory, a load being one
-  instruction with no bounds check; the shuffles are each one NEON
-  instruction, `zip`, `uzp`, `dup` or `ext` for seven in ten and `tbl` for the
-  rest; nothing uses `bitmask`. Not measured: iOS, whose Safari may give a
-  shared memory bounds checks, and its two performance cores beside four
-  efficiency ones, onto which the thread that parses may be put.
-- **Eight threads.** remotex starts a pool of up to eight. Five and six on
-  six cores gain nothing on the video and the walk and 12% on the browser at
-  4K; eight on eight have not been run.
+- **An iPhone or iPad's speed.** What its Safari is was asked of an iPhone
+  with an A17 Pro by the engine page (`bench/page/engine.ts`) on
+  2026-10-15: Safari 26.6.1, cross-origin isolated, with a shared memory,
+  a worker able to start workers of its own, and a timer of 0.02 ms in the
+  page and in a worker. Its WebAssembly takes what Safari's on the Mac
+  takes, SIMD, threads, bulk memory, tail calls and exceptions, and no
+  relaxed SIMD, multi-memory or 64-bit memory; Safari 27 on the Mac adds
+  JSPI, which the module does not use. A memory one thread grows is the
+  new size to an instance on another, and `memory.fill` and `memory.copy`
+  past the old end work there, as on the Mac: the Simulator's Safari 26.2
+  saw the old size and trapped them, and is no stand-in for that. A shared
+  memory of 1 GB from the start is given. Its `VideoDecoder` refuses VP9
+  profile 1 at 4:4:4, as the Mac's does, and takes AV1, which the Mac's
+  does not. On the same Mac Bun, Safari 27 and the Simulator's Safari
+  decode within a few percent of one another on one thread and agree on
+  what a change gains ([measurements.md](measurements.md)), so the engine
+  measured is the engine an iPhone runs. Not measured: the time a frame
+  takes on the iPhone's own cores, and whether its JavaScriptCore checks
+  each access against the memory's bounds, which on the Mac costs 11% of
+  the cycles on one thread and 7% to 10% on four.
+- **Threads on an iPhone or iPad.** The iPhone's Safari says it has four
+  cores where the A17 Pro has six, two performance and four efficiency, so
+  remotex's pool, as many threads as `navigator.hardwareConcurrency` says
+  up to eight, is four there. On the M2 Max eight are a little slower than
+  six on every sample, and six gain 16% over four on the browser and
+  nothing on the video ([measurements.md](measurements.md)).
 - **Four columns without the filter from 1440 wide.** On the video they
   would make a frame at 1440×900 or 1920×1080 23% to 24% faster on four
   threads for 2.1% to 2.3% of the bytes and 0.3 dB

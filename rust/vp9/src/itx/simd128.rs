@@ -256,6 +256,7 @@ unsafe fn add4x4(coeffs: *const i16, row: impl Fn(v128, v128) -> (v128, v128), c
 ///
 /// # Safety
 /// `coeffs` holds 16 coefficients; the 4×4 block at `dst` is writable.
+#[inline(never)]
 pub unsafe fn add_4x4(tx_type: usize, coeffs: *const i16, dst: *mut u8, stride: usize) {
     unsafe {
         match tx_type {
@@ -494,6 +495,7 @@ fn sixteen(a: [v128; 8], b: [v128; 8]) -> [v128; 16] {
 ///
 /// # Safety
 /// `coeffs` holds 64 coefficients; the 8×8 block at `dst` is writable.
+#[inline(never)]
 pub unsafe fn add_8x8(tx_type: usize, coeffs: *const i16, eob: usize, dst: *mut u8, stride: usize) {
     unsafe {
         let rows = |r: usize| v128_load(coeffs.add(8 * r) as *const v128);
@@ -519,6 +521,7 @@ pub unsafe fn add_8x8(tx_type: usize, coeffs: *const i16, eob: usize, dst: *mut 
 ///
 /// # Safety
 /// `coeffs` holds 256 coefficients; the 16×16 block at `dst` is writable.
+#[inline(never)]
 pub unsafe fn add_16x16(tx_type: usize, coeffs: *const i16, eob: usize, dst: *mut u8, stride: usize) {
     unsafe {
         let rows = |r: usize, x: usize| v128_load(coeffs.add(16 * r + x) as *const v128);

@@ -267,10 +267,14 @@ unsafe fn d153<const N: usize>(dst: *mut u8, stride: usize, above: *const u8, le
 /// `left[0..bs]` is the column to the left. Exactly the arguments of libvpx's
 /// `intra_pred_fn(dst, stride, above, left)`.
 ///
+/// Not inlined: the walk over a block's transform blocks it is called from
+/// is a function JavaScriptCore compiles better small.
+///
 /// # Safety
 ///
 /// Those ranges must be readable, `dst..dst + (bs - 1) * stride + bs` writable
 /// and apart from them, and `stride` at least bs.
+#[inline(never)]
 pub unsafe fn predict(
     pred: Pred,
     tx_size: usize,

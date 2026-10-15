@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
-use crate::frame::{CHAIN, Frame};
+use crate::frame::{CHAIN, Frame, SubBlocks};
 use crate::header::{self, Colour, FrameHeader, SEG_LVL_ALT_Q, SWITCHABLE, SegmentFeatures, Segments, Size, TX_MODE_SELECT};
 use crate::lf::{Filtered, LoopFilter};
 use crate::probs::{Counts, Probs};
@@ -64,6 +64,8 @@ pub struct Decoder {
     /// next so coded may take its blocks' from, and the map that frame
     /// writes; `seg_last` says which is which.
     seg_maps: [Vec<u8>; 2],
+    /// The sub-blocks of the frame's blocks under 8×8, by cell.
+    sub: Vec<SubBlocks>,
     seg_last: usize,
     /// Each tile column's rows of coefficients, between their parsing and
     /// their reconstruction.
@@ -93,6 +95,7 @@ impl Decoder {
             above_part: Vec::new(),
             seg_features: SegmentFeatures::default(),
             seg_maps: [Vec::new(), Vec::new()],
+            sub: Vec::new(),
             seg_last: 0,
             rows: Vec::new(),
             serial: 0,
@@ -356,6 +359,12 @@ impl Decoder {
         };
         let dc = |q: i32, delta: i32| DC_QLOOKUP[(q + delta).clamp(0, 255) as usize];
         let ac = |q: i32, delta: i32| AC_QLOOKUP[(q + delta).clamp(0, 255) as usize];
+        if self.sub.len() < mi_cols * mi_rows {
+            if self.sub.try_reserve_exact(mi_cols * mi_rows - self.sub.len()).is_err() {
+                return Err(Error::unsupported(format!("a {}x{} frame, whose sub-blocks the memory has no room for", frame.width, frame.height)));
+            }
+            self.sub.resize(mi_cols * mi_rows, SubBlocks::default());
+        }
         let [map_a, map_b] = &mut self.seg_maps;
         let (seg_last, seg_cur) = if self.seg_last == 0 { (map_a.as_ptr(), map_b.as_mut_ptr()) } else { (map_b.as_ptr(), map_a.as_mut_ptr()) };
         let f = FrameCtx {
@@ -371,6 +380,7 @@ impl Decoder {
             cur: std::array::from_fn(|p| frame.planes[p].data.as_mut_ptr()),
             refs: std::array::from_fn(|r| std::array::from_fn(|p| refs[r].as_ref().map_or(std::ptr::null(), |f| f.planes[p].data.as_ptr()))),
             mi: frame.mi.as_mut_ptr(),
+            sub: self.sub.as_mut_ptr(),
             prev_mi: prev.map_or(std::ptr::null(), |p| p.mi.as_ptr()),
             seg: *seg,
             seg_last,
@@ -663,6 +673,44 @@ mod tests {
             }
         }
         assert_eq!(keyframes, [0, 7]);
+    }
+
+    /// What a frame says changed since the picture before it holds every
+    /// sample that did: outside it, each plane is the last picture's.
+    #[test]
+    fn what_a_frame_says_changed_holds_every_sample_that_did() {
+        let file: &[u8] = include_bytes!("../../../test/data/active-map-330x194.ivf");
+        let mut d = Decoder::new(1);
+        let mut last: Option<Arc<Frame>> = None;
+        let mut rects = Vec::new();
+        let mut at = 32;
+        while at + 12 <= file.len() {
+            let len = u32::from_le_bytes(file[at..at + 4].try_into().unwrap()) as usize;
+            let shown = d.decode(&file[at + 12..at + 12 + len]).unwrap().expect("every frame is shown");
+            at += 12 + len;
+            let f = &shown.frame;
+            let rect = f.changed_since(last.as_ref().map_or(0, |l| l.serial()));
+            let [x, y, w, h] = rect;
+            if let Some(l) = &last {
+                for (plane, before) in f.planes.iter().zip(&l.planes) {
+                    for row in 0..f.height {
+                        for col in 0..f.width {
+                            let inside = (x..x + w).contains(&col) && (y..y + h).contains(&row);
+                            let at = row * plane.stride + col;
+                            assert!(inside || plane.data[at] == before.data[at], "frame {}, ({col}, {row}) outside {rect:?}", rects.len());
+                        }
+                    }
+                }
+            }
+            rects.push(rect);
+            last = Some(shown.frame);
+        }
+        let whole = [0, 0, 330, 194];
+        // The keyframes are whole, and the frames told where the picture
+        // changed are less.
+        assert_eq!((rects[0], rects[7]), (whole, whole));
+        assert!(rects.iter().filter(|&&r| r != whole).count() >= 6, "{rects:?}");
+        assert_eq!(last.unwrap().changed_since(rects.len() as u64), [0; 4]);
     }
 
     #[test]

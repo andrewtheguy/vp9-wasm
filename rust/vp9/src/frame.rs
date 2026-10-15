@@ -22,9 +22,12 @@ pub const NEWMV: u8 = 13;
 
 pub const BLOCK_8X8: u8 = 3;
 
-/// One block's mode, copied to every 8×8 cell the block covers.
+/// One block's mode, copied to every 8×8 cell the block covers: sixteen
+/// bytes, which the parse writes to each cell. A block under 8×8 has four
+/// modes and four motion vectors, its sub-blocks', which are in the frame's
+/// [`SubBlocks`] at its one cell, and the last of them here.
 #[derive(Clone, Copy, Default)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct ModeInfo {
     /// libvpx's BLOCK_SIZE: 0 is 4×4, 12 is 64×64.
     pub sb_type: u8,
@@ -43,10 +46,17 @@ pub struct ModeInfo {
     /// The block's segment was coded as the last map's, which is the context
     /// of the blocks after it coding theirs so.
     pub seg_id_predicted: bool,
+    /// For a block under 8×8, its last sub-block's.
     pub mv: Mv,
-    /// A block under 8×8 has four of each; the one that applies is set.
-    pub sub_mv: [Mv; 4],
-    pub sub_mode: [u8; 4],
+}
+
+/// The four sub-blocks' modes and motion vectors of a block under 8×8, in
+/// raster order, kept apart from its `ModeInfo` by its cell: those of the
+/// frame's blocks of 8×8 and more are not written, and are not read.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct SubBlocks {
+    pub mv: [Mv; 4],
+    pub mode: [u8; 4],
 }
 
 impl ModeInfo {
@@ -56,12 +66,13 @@ impl ModeInfo {
     }
 
     /// Whether the block is the last frame's samples at its own place: a
-    /// skipped block with no motion from the LAST reference, which on a
-    /// screen is nearly every block. Its 64×64 block started as those
-    /// samples (`Recon::start_row`), so it costs nothing to make.
+    /// skipped block of 8×8 or more with no motion from the LAST reference,
+    /// which on a screen is nearly every block. Its 64×64 block started as
+    /// those samples (`Recon::start_row`), so it costs nothing to make. A
+    /// block under 8×8 is made as any other, which gives the same samples.
     #[inline]
     pub fn still(&self) -> bool {
-        self.ref_frame == LAST_FRAME && self.skip && self.sub_mv == [Mv::default(); 4]
+        self.ref_frame == LAST_FRAME && self.skip && self.sb_type >= BLOCK_8X8 && self.mv == Mv::default()
     }
 }
 
@@ -110,6 +121,35 @@ impl Frame {
     /// many there are to a row.
     pub fn blocks(&self) -> (&[ModeInfo], usize) {
         (&self.mi, self.mi_cols)
+    }
+
+    /// The frame's number in its decoder's count, from 1.
+    pub fn serial(&self) -> u64 {
+        self.serial
+    }
+
+    /// Where the picture may differ from the one frame `serial` decoded to:
+    /// the left, top, width and height in samples of the 64×64 blocks a frame
+    /// after it wrote, clipped to the size to show, and a width of 0 where
+    /// none did. The whole picture where this frame does not come down from
+    /// that one by its LAST references, which every frame since a keyframe
+    /// of the same size does but for one predicted from another.
+    pub fn changed_since(&self, serial: u64) -> [usize; 4] {
+        if serial == 0 || !self.chain.contains(&serial) {
+            return [0, 0, self.width, self.height];
+        }
+        let sb_cols = self.mi_cols.div_ceil(8);
+        let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
+        for (i, _) in self.kept.iter().enumerate().filter(|&(_, &k)| k > serial) {
+            let (col, row) = (i % sb_cols, i / sb_cols);
+            (left, top) = (left.min(col * 64), top.min(row * 64));
+            (right, bottom) = (right.max(col * 64 + 64), bottom.max(row * 64 + 64));
+        }
+        if right == 0 {
+            return [0; 4];
+        }
+        let (right, bottom) = (right.min(self.width), bottom.min(self.height));
+        [left, top, right - left, bottom - top]
     }
 
     /// A frame of zeros, or an error where the memory has no room for it.
