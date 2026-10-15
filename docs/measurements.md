@@ -17,7 +17,12 @@ The latest, on the buffers held, are from wlshare's captures of 2026-10-09
 and the samples cut from those as `screen-vp9` 0.0.12 codes them. The
 last section is what a change is judged on now: the scenarios of wlshare's
 captures of 2026-10-13, as `screen-vp9` 0.0.18 codes them. The busy samples
-of every section before it are a flood of text, the worst case.
+of every section before it are a flood of text, the worst case. The walk's
+numbers are of its first 120 frames, the walk down alone, of a capture that
+stopped the video and settled on black (the artifacts drive's
+`archive/bench-walk-stopped/`), but for the walk's rows of what was kept,
+which are of the walk captured again on 2026-10-15, all 174 frames of it:
+down, back up and settled on the playing video.
 
 ## Where the time goes
 
@@ -830,14 +835,19 @@ base → now:
 | video 1920×1080 | 30.3 → 29.2 | 28.5 → 28.0 | 2.86 → 2.80 | 2.97 → 2.91 | 23.0 / 4.06 |
 | video 2560×1600, no filter | 41.8 → 40.3 | 39.7 → 38.6 | 3.90 → 3.85 | 4.04 → 3.95 | 34.3 / 4.87 |
 | video 3840×2160, no filter | 67.4 → 65.1 | 64.7 → 62.5 | 6.11 → 6.06 | 6.33 → 6.23 | 56.2 / 8.11 |
-| walk 3840×2160, no filter | 51.1 → 48.6 | 48.8 → 46.1 | 4.85 → 4.74 | 4.92 → 4.64 | 40.6 / 5.91 |
+| walk 1920×1080, all 174 frames | 20.2 → 19.5 | 19.0 → 18.5 | 1.80 → 1.77 | 1.91 → 1.82 | 13.7 / 2.31 |
+| walk 3840×2160, all 174 frames, no filter | 44.6 → 43.0 | 43.1 → 41.2 | 4.08 → 3.98 | 4.02 → 3.93 | 35.3 / 4.71 |
 | browser 3840×2160, no filter | 50.6 → 48.0 | 54.4 → 50.4 | 4.85 → 4.61 | 5.12 → 4.92 | 41.2 / 4.74 |
 | flood 1920×1080 | 354.2 → 347.9 | 389.7 → 380.9 | 46.08 → 45.91 | 51.52 → 51.24 | 366.2 / 54.71 |
 
 Under Bun a fifth fewer cycles on the quiet terminal, which is the engine's
 tier-up of smaller functions, and 3.4% to 5.1% on every busy sample but the
 flood's 1.8%; under Node up to 7.4%. On four threads, which wait on the
-parse, 1% to 5% faster. Nothing is slower.
+parse, 1% to 5% faster. Nothing is slower. The walk's rows are of its
+settled sample, measured again on 2026-10-15, Node's on one thread from
+seven rounds: five, at a load of 8.7, had them level, and the same two
+builds on the walk down alone had 51.1 → 48.6 under Bun and 48.8 → 46.1
+under Node at 4K.
 
 **The upload a quiet frame saves.** Three R8 planes of 3840×2160 uploaded
 with `texSubImage2D` from a buffer of the planes, in Playwright's WebKit
