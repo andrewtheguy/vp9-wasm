@@ -189,3 +189,64 @@ video frame takes 5% to 8% fewer cycles under Safari's engine and under
 Chrome's. The pairs above were measured under Bun on x86 alone, where
 JavaScriptCore makes a shuffle of two vectors three instructions; there the
 same pairs are still 3% slower on a video frame, and 2% faster under V8.
+
+## On the M2 Max, under JavaScriptCore and V8
+
+Measured on 2026-10-15 on an M2 Max, the target, by `bench/run.sh`: each
+built on 0.0.11 and screened under both engines, three rounds, on the
+samples it touches, the base against a copy of itself being 0.0% to 0.6%
+apart; cycles a frame on one thread.
+
+- **The sub-sample filters multiplying bytes.** Every tap of a kernel at a
+  fraction fits in a signed byte, and a sample less 128 does too, so
+  `i16x8.extmul_*_i8x16_s`
+  multiplies them as they are loaded, sixteen outputs a load; the BIAS
+  argument is the same. JavaScriptCore makes
+  `i16x8.add(acc, i16x8.extmul_*_i8x16_s(a, b))` one `smlal` or `smlal2`
+  (`VectorMulAddLow/High` in its Air), where it makes `i16x8.add` of an
+  `i16x8.mul` two instructions and V8 one `mla`. But LLVM undoes `extmul`
+  whenever the taps are a splat it can hoist: it widens them once before
+  the loop, and what is left is a widening of the samples and a multiply.
+  Built so, 3–4% more cycles under Bun. With the taps loaded each row
+  through a pointer `black_box` hides, `extmul` stays: `both<16>` at 16×16
+  in cache 123 ns a call under Bun against 140, and 130 under Node against
+  110; in the decoder 1.3% fewer cycles under Bun on the 4K video and walk,
+  2% more on the browser, and 1.6–5% more under Node. The windows as byte
+  shifts of one load (`ext`) instead of eight loads: LLVM folds the high
+  half's shift into a widening again, slower under both. Rust's wasm `asm!`
+  takes no `v128` operand, so the instruction cannot be written out.
+- **The across pass from one load a row:** sixteen bytes loaded and
+  widened once, each tap's eight lanes a shift of the two
+  halves (`ext`), and the rows between the passes kept signed and clipped
+  by `min`/`max`. 6% fewer instructions on the 4K video and walk, the same
+  cycles under Bun (0.6% fewer), and in isolation the same 140 ns: the
+  filter is held by the chain of each output's eight adds, which LLVM
+  reassociates back into a chain when written as a tree.
+- **The intra predictors in vectors**, DC, V, H and TM,
+  the only modes the captures use (the browser at 4K: 58,000 DC 8×8 a
+  frame): exact over 400,000 random edges, and the same cycles under both
+  engines. Leaving prediction out saves 5.2 M cycles of the browser's 4K
+  frame under Bun, but that build also lets LLVM drop the gathering of the
+  edges as dead; what an intra block costs is its chain, each block waiting
+  on the samples the one before it just wrote.
+- **A vertical edge's rows loaded once as vectors**, for the
+  test of rows that are one value and then the transpose, where they are
+  loaded into general registers for the test (JavaScriptCore making each
+  rotate of a constant three instructions) and again for the transpose:
+  the same cycles under Bun, 1% more under Node.
+
+Built again on this tree, as `tried.md` above records them, under Bun:
+
+| what | M2 Max, Bun, cycles | as recorded |
+|---|---|---|
+| the loop filter's kernels inlined into the walk | the terminal 6% more, the videos the same | x86: the terminal 5% more |
+| the pairs along horizontal edges alone | 1% more at 1920×1080 | x86, Node: 0.8% fewer |
+| the pairs along vertical edges alone | 3% more | x86, Node: 0.8% fewer |
+| the split as `((range - 1) * prob >> 8) + 1` | 1.6–2% more | M2: 4% more |
+| `256 - prob` from a table | 3–4% more | M2: 4.6% more |
+| the window to `large_token` by value | 0.7–1.4% more | M2: 3–4% more |
+| the first boolean's left context and probabilities in locals | within 0.3% | x86: none fewer |
+- **A DC alone of an ADST apart from `add_first`**, so that `residual`,
+  which it is inlined into, takes no 512 bytes of shadow stack for every
+  DC alone: within 0.4% of the build without it.
+

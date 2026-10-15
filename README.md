@@ -169,8 +169,12 @@ its tables were transcribed from libvpx 1.16.0 (BSD-3-Clause,
   releases it by its serial, and the frames after it decode into other
   buffers meanwhile, so the next frame decodes while the page uploads one.
 - `rust/vp9-bench` is the native harness above. To profile the module itself,
-  run it under `node --perf-prof` and `perf record`: the build keeps the
-  function names. Profiles and logs go under `tmp/`.
+  run it under `node --perf-prof` and `perf record` on Linux, or on a Mac under
+  `samply` with Bun's JavaScriptCore writing a jitdump
+  (`BUN_JSC_useJITDump=1 BUN_JSC_jitDumpDirectory=DIR`) or Node's perf map
+  (`--perf-basic-prof`), as [docs/measurements.md](docs/measurements.md)
+  shows: the build keeps the function names. Profiles and logs go under
+  `tmp/`.
 
 The comparison is on what the remotex gateway itself wrote on 2026-10-08,
 one desktop of four panes, an animation, a page scrolled, a terminal
