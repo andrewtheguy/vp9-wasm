@@ -24,10 +24,10 @@ export interface ModuleDecoder {
   decode(): boolean;
   picture(): number;
   /**
-   * Where the last picture may differ from the decoder's picture before it, as four numbers: left, top, width and
-   * height, the whole picture where it is not predicted from that one, and a width of 0 where nothing changed.
+   * Where the last picture may differ from picture `since`, by its serial, as four numbers: left, top, width and
+   * height, the whole picture where it does not come down from that one, and a width of 0 where nothing changed.
    */
-  changed(): number;
+  changed(since: number): number;
   release(serial: number): void;
   free(): void;
 }

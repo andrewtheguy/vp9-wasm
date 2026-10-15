@@ -63,6 +63,15 @@ pub fn start_pool(threads: usize) -> Result<(), JsError> {
 /// How many numbers [`Decoder::picture`] describes a picture in.
 const PICTURE_FIELDS: usize = 16;
 
+/// What the page knows a picture by: its frame's serial in the decoder's
+/// count, which counts from 1 and no frame of it shares, wrapped short of 0 to
+/// fit 32 bits.
+const WRAP: u64 = u32::MAX as u64;
+
+fn page_serial(serial: u64) -> u32 {
+    ((serial - 1) % WRAP) as u32 + 1
+}
+
 /// One stream's decoder.
 #[wasm_bindgen]
 pub struct Decoder {
@@ -76,10 +85,7 @@ pub struct Decoder {
     /// The last picture's serial.
     serial: u32,
     picture: [i32; PICTURE_FIELDS],
-    /// Where the last picture may differ from the one before it
-    /// ([`Self::changed`]), and that one's frame in the decoder's count.
     changed: [i32; 4],
-    shown: u64,
 }
 
 #[wasm_bindgen]
@@ -88,7 +94,7 @@ impl Decoder {
     /// caller for one.
     #[wasm_bindgen(constructor)]
     pub fn new(threads: usize) -> Decoder {
-        Decoder { inner: vp9::Decoder::new(threads), input: Vec::new(), held: Vec::new(), serial: 0, picture: [0; PICTURE_FIELDS], changed: [0; 4], shown: 0 }
+        Decoder { inner: vp9::Decoder::new(threads), input: Vec::new(), held: Vec::new(), serial: 0, picture: [0; PICTURE_FIELDS], changed: [0; 4] }
     }
 
     /// Room for a frame of `size` bytes in this module's memory, where the
@@ -112,9 +118,7 @@ impl Decoder {
         let Some(decoded) = r.map_err(|e| JsError::new(&e.to_string()))? else {
             return Ok(false);
         };
-        self.serial = self.serial.wrapping_add(1).max(1);
-        self.changed = decoded.frame.changed_since(self.shown).map(|n| n as i32);
-        self.shown = decoded.frame.serial();
+        self.serial = page_serial(decoded.frame.serial());
         self.held.push((self.serial, decoded));
         Ok(true)
     }
@@ -163,13 +167,26 @@ impl Decoder {
         p.as_ptr()
     }
 
-    /// Where the picture the last frame decoded to may differ from the
-    /// picture before it, the one of the serial before its own: four numbers,
-    /// the left, top, width and height in samples of a rectangle of the
-    /// planes, the whole picture for a keyframe or a picture not predicted
-    /// from the one before, and a width of 0 where nothing changed. A page
-    /// that has the picture before in its textures need upload only that.
-    pub fn changed(&self) -> *const i32 {
-        self.changed.as_ptr()
+    /// Where the picture the last frame decoded to may differ from picture
+    /// `since`, by its serial, in four numbers: the left, top, width and
+    /// height in samples of a rectangle of the planes, the whole picture for
+    /// a keyframe or a picture that does not come down from that one, and a
+    /// width of 0 where nothing changed. A page that has that picture in its
+    /// textures need upload only that. All four are 0 once the picture is
+    /// released.
+    pub fn changed(&mut self, since: u32) -> *const i32 {
+        let c = &mut self.changed;
+        *c = [0; 4];
+        if let Some((_, d)) = self.held.last().filter(|(s, _)| *s == self.serial) {
+            // The serial `since` is, counted back from this picture's.
+            let serial = d.frame.serial();
+            let back = (u64::from(self.serial) + WRAP - u64::from(since)) % WRAP;
+            let rect = match since {
+                1.. if back < serial => d.frame.changed_since(serial - back),
+                _ => [0, 0, d.frame.width, d.frame.height],
+            };
+            *c = rect.map(|n| n as i32);
+        }
+        c.as_ptr()
     }
 }

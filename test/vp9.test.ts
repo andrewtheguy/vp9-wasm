@@ -179,7 +179,9 @@ describe("a 4:4:4 stream", () => {
           let less = 0;
           for (const frame of fixture.frames) {
             const picture = decodeHeld(loaded, d, frame)!;
-            const changed = [...new Int32Array(loaded.memory.buffer, d.changed(), 4)];
+            // None at all says nothing of where.
+            expect([...new Int32Array(loaded.memory.buffer, d.changed(0), 4)]).toEqual(whole);
+            const changed = [...new Int32Array(loaded.memory.buffer, d.changed(before?.serial ?? 0), 4)];
             const [x, y, w, h] = changed as [number, number, number, number];
             if (picture.keyframe || !before) {
               expect(changed).toEqual(whole);
