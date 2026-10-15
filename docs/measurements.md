@@ -845,3 +845,20 @@ and Chromium on the same Mac, ms a frame with `finish`: the whole picture
 1.6 in WebKit and 1.3 in Chromium; a 128×128 rectangle of each plane 0.13
 and 0.01 given by the offset of its first sample, but 0.50 in WebKit given
 by `UNPACK_SKIP_PIXELS` and `UNPACK_SKIP_ROWS`.
+
+**The same module in Safari.** `bench/page/serve.ts` on the same M2 Max,
+the base against what was kept, three rounds, one thread, mean ms a frame
+after the first: Safari 27.0 on the Mac and Safari 26.2 in the iOS
+Simulator, which runs on the Mac's cores, beside Bun's from `bench/run.sh`
+(five rounds).
+
+| | Bun | Safari 27.0 | iOS Simulator's Safari 26.2 |
+|---|---|---|---|
+| terminal 1440×900 | 0.27 → 0.25 | 0.27 → 0.25 | 0.30 → 0.27 |
+| video 1280×800 | 4.82 → 4.71 | 4.90 → 4.80 | 5.08 → 4.92 |
+| video 1920×1080 | 7.95 → 7.76 | 7.99 → 7.82 | 8.31 → 8.14 |
+
+The three decode within a few percent of one another and agree on what the
+change gains, so Bun measures what Safari runs. An iPhone's Safari 26.6.1
+takes the same WebAssembly features as the Simulator's
+([remaining.md](remaining.md)).

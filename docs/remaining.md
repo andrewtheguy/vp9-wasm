@@ -65,22 +65,32 @@ come sooner is the parse:
 
 ## Not measured
 
-- **An iPhone or iPad.** The Mac on Apple silicon is measured
-  ([measurements.md](measurements.md)): on an M2 under Bun, whose
-  JavaScriptCore is Safari's, a frame of the flood is three quarters token
-  parsing, waiting on the boolean's chain, and the module is level with
-  libvpx's NEON build on one thread (`bench/run.sh`, and what was tried
-  there in [tried.md](tried.md)). The memory is fast memory, a load being one
-  instruction with no bounds check; the shuffles are each one NEON
-  instruction, `zip`, `uzp`, `dup` or `ext` for seven in ten and `tbl` for the
-  rest; nothing uses `bitmask`. Not measured: iOS itself. JavaScriptCore checking each access against
-  the memory's bounds, as iOS's may for a shared memory, costs 11% of the
-  cycles on one thread on the Mac and 7% to 10% on four; and an iPhone's
-  two performance cores beside four efficiency ones, onto which the thread
-  that parses may be put, have no stand-in on a Mac.
-- **Eight threads on an iPhone or iPad.** On the M2 Max eight are a
-  little slower than six on every sample, and six gain 16% over four on the
-  browser and nothing on the video ([measurements.md](measurements.md)).
+- **An iPhone or iPad's speed.** What its Safari is was asked of an iPhone
+  with an A17 Pro by the engine page (`bench/page/engine.ts`) on
+  2026-10-15: Safari 26.6.1, cross-origin isolated, with a shared memory,
+  a worker able to start workers of its own, and a timer of 0.02 ms in the
+  page and in a worker. Its WebAssembly takes what Safari's on the Mac
+  takes, SIMD, threads, bulk memory, tail calls and exceptions, and no
+  relaxed SIMD, multi-memory or 64-bit memory; Safari 27 on the Mac adds
+  JSPI, which the module does not use. A memory one thread grows is the
+  new size to an instance on another, and `memory.fill` and `memory.copy`
+  past the old end work there, as on the Mac: the Simulator's Safari 26.2
+  saw the old size and trapped them, and is no stand-in for that. A shared
+  memory of 1 GB from the start is given. Its `VideoDecoder` refuses VP9
+  profile 1 at 4:4:4, as the Mac's does, and takes AV1, which the Mac's
+  does not. On the same Mac Bun, Safari 27 and the Simulator's Safari
+  decode within a few percent of one another on one thread and agree on
+  what a change gains ([measurements.md](measurements.md)), so the engine
+  measured is the engine an iPhone runs. Not measured: the time a frame
+  takes on the iPhone's own cores, and whether its JavaScriptCore checks
+  each access against the memory's bounds, which on the Mac costs 11% of
+  the cycles on one thread and 7% to 10% on four.
+- **Threads on an iPhone or iPad.** The iPhone's Safari says it has four
+  cores where the A17 Pro has six, two performance and four efficiency, so
+  remotex's pool, as many threads as `navigator.hardwareConcurrency` says
+  up to eight, is four there. On the M2 Max eight are a little slower than
+  six on every sample, and six gain 16% over four on the browser and
+  nothing on the video ([measurements.md](measurements.md)).
 - **Four columns without the filter from 1440 wide.** On the video they
   would make a frame at 1440×900 or 1920×1080 23% to 24% faster on four
   threads for 2.1% to 2.3% of the bytes and 0.3 dB
