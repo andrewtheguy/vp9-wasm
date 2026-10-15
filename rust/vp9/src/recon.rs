@@ -257,7 +257,8 @@ impl<'a> Recon<'a> {
                         let mode = if plane != 0 {
                             mi.uv_mode
                         } else if bsize < BLOCK_8X8 {
-                            mi.sub_mode[(row << 1) + col]
+                            // SAFETY: the block's cell, which its parse wrote.
+                            unsafe { (*f.sub.add(mi_row * f.mi_cols + mi_col)).mode[((row << 1) + col) & 3] }
                         } else {
                             mi.mode
                         };
@@ -488,8 +489,10 @@ impl<'a> Recon<'a> {
         let (x, y) = (self.mi_col * 8, self.mi_row * 8);
         for plane in 0..3 {
             if mi.sb_type < BLOCK_8X8 {
+                // SAFETY: the block's cell, which its parse wrote.
+                let sub_mv = unsafe { (*self.f.sub.add(self.mi_row * self.f.mi_cols + self.mi_col)).mv };
                 for i in 0..4 {
-                    self.predict_inter_block(refs[plane], plane, x + 4 * (i & 1), y + 4 * (i >> 1), 4, 4, mi.sub_mv[i], mi.interp_filter);
+                    self.predict_inter_block(refs[plane], plane, x + 4 * (i & 1), y + 4 * (i >> 1), 4, 4, sub_mv[i], mi.interp_filter);
                 }
             } else {
                 self.predict_inter_block(refs[plane], plane, x, y, 4 * n4_w, 4 * n4_h, mi.mv, mi.interp_filter);

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
-use crate::frame::{CHAIN, Frame};
+use crate::frame::{CHAIN, Frame, SubBlocks};
 use crate::header::{self, Colour, FrameHeader, SEG_LVL_ALT_Q, SWITCHABLE, SegmentFeatures, Segments, Size, TX_MODE_SELECT};
 use crate::lf::{Filtered, LoopFilter};
 use crate::probs::{Counts, Probs};
@@ -64,6 +64,8 @@ pub struct Decoder {
     /// next so coded may take its blocks' from, and the map that frame
     /// writes; `seg_last` says which is which.
     seg_maps: [Vec<u8>; 2],
+    /// The sub-blocks of the frame's blocks under 8×8, by cell.
+    sub: Vec<SubBlocks>,
     seg_last: usize,
     /// Each tile column's rows of coefficients, between their parsing and
     /// their reconstruction.
@@ -93,6 +95,7 @@ impl Decoder {
             above_part: Vec::new(),
             seg_features: SegmentFeatures::default(),
             seg_maps: [Vec::new(), Vec::new()],
+            sub: Vec::new(),
             seg_last: 0,
             rows: Vec::new(),
             serial: 0,
@@ -356,6 +359,12 @@ impl Decoder {
         };
         let dc = |q: i32, delta: i32| DC_QLOOKUP[(q + delta).clamp(0, 255) as usize];
         let ac = |q: i32, delta: i32| AC_QLOOKUP[(q + delta).clamp(0, 255) as usize];
+        if self.sub.len() < mi_cols * mi_rows {
+            if self.sub.try_reserve_exact(mi_cols * mi_rows - self.sub.len()).is_err() {
+                return Err(Error::unsupported(format!("a {}x{} frame, whose sub-blocks the memory has no room for", frame.width, frame.height)));
+            }
+            self.sub.resize(mi_cols * mi_rows, SubBlocks::default());
+        }
         let [map_a, map_b] = &mut self.seg_maps;
         let (seg_last, seg_cur) = if self.seg_last == 0 { (map_a.as_ptr(), map_b.as_mut_ptr()) } else { (map_b.as_ptr(), map_a.as_mut_ptr()) };
         let f = FrameCtx {
@@ -371,6 +380,7 @@ impl Decoder {
             cur: std::array::from_fn(|p| frame.planes[p].data.as_mut_ptr()),
             refs: std::array::from_fn(|r| std::array::from_fn(|p| refs[r].as_ref().map_or(std::ptr::null(), |f| f.planes[p].data.as_ptr()))),
             mi: frame.mi.as_mut_ptr(),
+            sub: self.sub.as_mut_ptr(),
             prev_mi: prev.map_or(std::ptr::null(), |p| p.mi.as_ptr()),
             seg: *seg,
             seg_last,

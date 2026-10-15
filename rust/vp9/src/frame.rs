@@ -22,9 +22,12 @@ pub const NEWMV: u8 = 13;
 
 pub const BLOCK_8X8: u8 = 3;
 
-/// One block's mode, copied to every 8×8 cell the block covers.
+/// One block's mode, copied to every 8×8 cell the block covers: sixteen
+/// bytes, which the parse writes to each cell. A block under 8×8 has four
+/// modes and four motion vectors, its sub-blocks', which are in the frame's
+/// [`SubBlocks`] at its one cell, and the last of them here.
 #[derive(Clone, Copy, Default)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct ModeInfo {
     /// libvpx's BLOCK_SIZE: 0 is 4×4, 12 is 64×64.
     pub sb_type: u8,
@@ -43,10 +46,17 @@ pub struct ModeInfo {
     /// The block's segment was coded as the last map's, which is the context
     /// of the blocks after it coding theirs so.
     pub seg_id_predicted: bool,
+    /// For a block under 8×8, its last sub-block's.
     pub mv: Mv,
-    /// A block under 8×8 has four of each; the one that applies is set.
-    pub sub_mv: [Mv; 4],
-    pub sub_mode: [u8; 4],
+}
+
+/// The four sub-blocks' modes and motion vectors of a block under 8×8, in
+/// raster order, kept apart from its `ModeInfo` by its cell: those of the
+/// frame's blocks of 8×8 and more are not written, and are not read.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct SubBlocks {
+    pub mv: [Mv; 4],
+    pub mode: [u8; 4],
 }
 
 impl ModeInfo {
@@ -56,12 +66,13 @@ impl ModeInfo {
     }
 
     /// Whether the block is the last frame's samples at its own place: a
-    /// skipped block with no motion from the LAST reference, which on a
-    /// screen is nearly every block. Its 64×64 block started as those
-    /// samples (`Recon::start_row`), so it costs nothing to make.
+    /// skipped block of 8×8 or more with no motion from the LAST reference,
+    /// which on a screen is nearly every block. Its 64×64 block started as
+    /// those samples (`Recon::start_row`), so it costs nothing to make. A
+    /// block under 8×8 is made as any other, which gives the same samples.
     #[inline]
     pub fn still(&self) -> bool {
-        self.ref_frame == LAST_FRAME && self.skip && self.sub_mv == [Mv::default(); 4]
+        self.ref_frame == LAST_FRAME && self.skip && self.sb_type >= BLOCK_8X8 && self.mv == Mv::default()
     }
 }
 
