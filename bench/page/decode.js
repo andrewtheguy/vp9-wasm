@@ -1,5 +1,5 @@
 // A run of bench/page: the build's module loaded on a memory of its own, its pool's threads seated as workers when
-// the run has more than one (remotex's softwareDecoder.worker.ts does the same), the sample decoded frame by frame
+// the run has more than one (zDesk's softwareDecoder.worker.ts does the same), the sample decoded frame by frame
 // and each frame timed, and, where asked, each picture checked against libvpx's MD5s, outside the timing.
 import { md5 } from "./md5.js";
 

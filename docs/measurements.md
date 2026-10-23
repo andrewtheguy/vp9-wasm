@@ -11,7 +11,7 @@ The numbers are from the module under Bun or Node on a six-core x86
 workstation. The earlier ones are from four captures made before the
 gateway's own: a wlshare desktop, a Mac at 1440×900, a shader animation and
 a Mac screen recording, called the desktop, the Mac, the shader and the
-recording. The later ones are from what the remotex gateway wrote on
+recording. The later ones are from what the zDesk gateway wrote on
 2026-10-08 and the 120-frame samples of `bench/samples.sh` cut from it.
 The latest, on the buffers held, are from wlshare's captures of 2026-10-09
 and the samples cut from those as `screen-vp9` 0.0.12 codes them. The
@@ -144,7 +144,7 @@ encoder's to do and is paid for in the picture. Every frame of the captures has 
 0: libvpx at this speed takes the level from the quantizer, never below 4
 between keyframes, a light filter that still visits every edge. Its
 `VP9E_SET_DISABLE_LOOPFILTER` at 2 makes the level 0, at which a frame is
-not filtered at all. Measured on what the remotex gateway itself wrote on
+not filtered at all. Measured on what the zDesk gateway itself wrote on
 2026-10-08, one desktop of four panes at eight sizes: a Windows desktop
 over RDP at five and a virtual Mac at three. The first 300 frames of each
 were coded again by `screen-vp9` with the filter and without it, at
@@ -414,7 +414,7 @@ in one pass or another. Warm, then, the module is level with libvpx on the
 terminal and uncover and a fifth to a third behind on the video, and the
 cold gaps of the table above on the quiet samples are the engine's start.
 
-A page pays it once. remotex keeps the module's worker for the paint
+A page pays it once. zDesk keeps the module's worker for the paint
 worker's life, so a stream or a resize after the first runs code already
 optimised; each function is compiled again once in the page, when it first
 runs hot, which on a desktop that turns from text to video is then. It is
@@ -560,7 +560,7 @@ the filter whichever way its rows arrive.
 
 What `screen-vp9` chooses, on the video. Its rule, four tile columns
 without the loop filter from 2048 wide and two or fewer with it below, was
-settled on what the remotex gateway wrote and on the flood of a Windows
+settled on what the zDesk gateway wrote and on the flood of a Windows
 terminal, which paid 12% to 16% of its bytes for two columns more; the
 video does not. The first 120 frames of the video captures at 1440×900,
 1920×1080 and 2560×1600, the frames of the benchmark's samples, coded again

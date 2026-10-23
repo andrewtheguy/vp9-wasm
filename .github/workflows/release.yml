@@ -1,8 +1,8 @@
 name: Release vp9-wasm
 
 # The module, built and tested on a fresh runner and attached to a release of
-# this repository: the archive remotex's frontend build takes, and its
-# SHA256SUMS, whose digest is what remotex pins.
+# this repository: the archive zDesk's frontend build takes, and its
+# SHA256SUMS, whose digest is what zDesk pins.
 on:
   workflow_dispatch:
 
@@ -75,7 +75,7 @@ jobs:
             --title "$TAG" \
             --generate-notes \
             --notes "$(printf '%s\n\n    %s\n' \
-              "\`$ARCHIVE\` holds the module as remotex's build takes it: \`vp9.js\`, \`vp9_bg.wasm\` and \`vp9.d.ts\`. Its \`SHA256SUMS\` reads:" \
+              "\`$ARCHIVE\` holds the module as zDesk's build takes it: \`vp9.js\`, \`vp9_bg.wasm\` and \`vp9.d.ts\`. Its \`SHA256SUMS\` reads:" \
               "$(cat SHA256SUMS)")" \
             ${{ steps.version.outputs.is_prerelease == 'true' && '--prerelease' || '' }} \
             SHA256SUMS "$ARCHIVE"

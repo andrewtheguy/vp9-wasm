@@ -1,4 +1,4 @@
-//! A 4:4:4 stream of a desktop-like picture, coded as the remotex gateway
+//! A 4:4:4 stream of a desktop-like picture, coded as the zDesk gateway
 //! drives screen-vp9: a keyframe, then frames told where the picture changed,
 //! a whole frame, a keyframe forced in the middle, and the dial moved. libvpx
 //! codes a frame told where the picture changed through its active map, which

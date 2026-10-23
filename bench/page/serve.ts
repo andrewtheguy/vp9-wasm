@@ -1,6 +1,6 @@
 // bun bench/page/serve.ts BUILD...: the benchmark in a browser, Safari's engine as Safari runs it, where
 // bench/run.sh runs it in Bun. Each BUILD is a directory holding a build of the module (vp9.js, vp9_bg.wasm). The
-// page decodes each of bench/samples.sh's samples in a worker as remotex's page does, its pool's threads workers of
+// page decodes each of bench/samples.sh's samples in a worker as zDesk's page does, its pool's threads workers of
 // that worker, the builds alternating round by round, one run a page load so that each starts with an engine that has
 // compiled nothing; the first round of each build checks every picture against libvpx's MD5s. The page reports each
 // frame's time, and the server prints the medians over the rounds of the mean ms a frame after the first, and of the

@@ -1,4 +1,4 @@
-// The engine page's worker: its timer, whether it can start a worker of its own (remotex's decode worker starts its
+// The engine page's worker: its timer, whether it can start a worker of its own (zDesk's decode worker starts its
 // pool's threads so), and an instance on the page's shared memory that grows it, for the page's thread to use.
 self.onmessage = async ({ data }) => {
   const nested = await new Promise((resolve) => {

@@ -1,4 +1,4 @@
-//! A decoder for the VP9 remotex and wlshare send a browser at 4:4:4: profile
+//! A decoder for the VP9 zDesk and wlshare send a browser at 4:4:4: profile
 //! 1 at 8 bits, every frame the size of its references, each block predicted
 //! from one of them. It refuses every other shape of stream by name.
 //!

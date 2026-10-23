@@ -1,4 +1,4 @@
-# The decoder for the VP9 remotex and wlshare send a browser at 4:4:4, and
+# The decoder for the VP9 zDesk and wlshare send a browser at 4:4:4, and
 # nothing else of VP9: profile 1 at 8 bits, one size per stream, single
 # references. Anything else is refused by name rather than decoded wrong.
 #

@@ -1,7 +1,7 @@
 # The module's threads need the standard library built for shared memory, which
 # only a nightly Cargo does (`build-std`, in .cargo/config.toml); the shipped
 # one links, but its locks are single-thread stubs. The pin is this crate's
-# alone: the decoder itself builds on stable. A dated nightly, the one remotex's
+# alone: the decoder itself builds on stable. A dated nightly, the one zDesk's
 # own module is built with, so a release's archive is the same wherever it is
 # built. rustup installs it from this file on the first build.
 [toolchain]

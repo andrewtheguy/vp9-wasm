@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the VP9 WebAssembly decoder for remotex's page: rust/vp9-web, the `vp9`
+# Build the VP9 WebAssembly decoder for zDesk's page: rust/vp9-web, the `vp9`
 # crate behind the few calls the page's decode worker makes, with threads and
 # SIMD, through wasm-pack. Writes build/out/vp9.js (wasm-bindgen's ES module
 # glue), build/out/vp9_bg.wasm and build/out/vp9.d.ts (the glue's types), as

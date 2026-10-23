@@ -87,7 +87,7 @@ come sooner is the parse:
   the cycles on one thread and 7% to 10% on four.
 - **Threads on an iPhone or iPad.** The iPhone's Safari says it has four
   cores where the A17 Pro has six, two performance and four efficiency, so
-  remotex's pool, as many threads as `navigator.hardwareConcurrency` says
+  zDesk's pool, as many threads as `navigator.hardwareConcurrency` says
   up to eight, is four there. On the M2 Max eight are a little slower than
   six on every sample, and six gain 16% over four on the browser and
   nothing on the video ([measurements.md](measurements.md)).

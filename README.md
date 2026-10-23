@@ -1,10 +1,10 @@
 # vp9-wasm (experimental)
 
 A software decoder for VP9 at 4:4:4, for
-[remotex](https://github.com/andrewtheguy/remotex)'s browser client where the
+[zDesk](https://github.com/andrewtheguy/zdesk)'s browser client where the
 browser's `VideoDecoder` does not take VP9 profile 1: Safari on iOS and
 iPadOS, for one, which decodes VP9 in hardware alone and so at 4:2:0 alone. It
-is written in Rust for the one shape of stream remotex and
+is written in Rust for the one shape of stream zDesk and
 [wlshare](https://github.com/andrewtheguy/wlshare) send and nothing else of
 VP9, compiled to WebAssembly with SIMD128 and threads, and decodes bit for bit
 as libvpx does.
@@ -12,7 +12,7 @@ as libvpx does.
 A release is `vp9-wasm-vX.Y.Z.tar.gz`, attached to this repository's release
 `vX.Y.Z` with its `SHA256SUMS`, holding the module as wasm-pack names it:
 `vp9.js`, wasm-bindgen's ES module glue, `vp9_bg.wasm`, and `vp9.d.ts`, the
-glue's types. remotex pins one by version and SHA-256, and its frontend build
+glue's types. zDesk pins one by version and SHA-256, and its frontend build
 downloads that archive and bundles the module with the page.
 
 ## Building
@@ -61,7 +61,7 @@ three agree frame for frame.
 `bun test` loads `build/out` (or `$VP9_WASM_DIR`) under Bun as the page loads
 it: the module on a shared memory, its pool's threads as workers that each run
 an instance of it. Every 4:4:4 stream in `test/data`, libvpx's output under
-settings near remotex's, must decode to libvpx's `-f framemd5`, recorded in
+settings near zDesk's, must decode to libvpx's `-f framemd5`, recorded in
 `test/data/reference.json`, on one thread, on two and on four; the 4:2:0 one
 must be refused by name. The tests also cover where the planes are in the
 memory, the colour a stream states, joining a stream before its keyframe, a
@@ -71,7 +71,7 @@ A run needs no ffmpeg. `bun run fixtures` regenerates the streams and their
 reference with the host's ffmpeg and libvpx from the specs in
 `test/fixtures.ts`; commit what it writes. The two `active-map` streams are
 written by `test/screen-vp9`, a program over the `screen-vp9` crate that codes
-a picture as the remotex gateway does, told where it changed: ffmpeg has no
+a picture as the zDesk gateway does, told where it changed: ffmpeg has no
 way to ask libvpx for its active map. `bun run fixtures NAME...` writes the
 streams named and keeps the rest, for a host whose ffmpeg is not the one they
 were coded by; the reference decode is the same from any.
@@ -103,7 +103,7 @@ and the tag take their number from it), commit, push, and run the
 `Release vp9-wasm` workflow (`.github/workflows/release.yml`) on that branch.
 It tests the decoder, builds the module, tests it, and creates the release
 `vX.Y.Z` at that commit with the archive and its `SHA256SUMS`; from a branch
-other than `main` it is a prerelease. remotex then takes it as a new version
+other than `main` it is a prerelease. zDesk then takes it as a new version
 and checksum.
 
 ## The decoder
@@ -157,7 +157,7 @@ its tables were transcribed from libvpx 1.16.0 (BSD-3-Clause,
   which reconstruction puts into a block of zeros and takes out again; and
   symbols are counted
   only in a frame whose probabilities adapt to them, which no frame of
-  remotex's or wlshare's does.
+  zDesk's or wlshare's does.
 - `rust/vp9-web` is the page's module, in the shape of hevc-wasm's:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode`,
@@ -183,7 +183,7 @@ its tables were transcribed from libvpx 1.16.0 (BSD-3-Clause,
   shows: the build keeps the function names. Profiles and logs go under
   `tmp/`.
 
-The comparison is on what the remotex gateway itself wrote on 2026-10-08,
+The comparison is on what the zDesk gateway itself wrote on 2026-10-08,
 one desktop of four panes, an animation, a page scrolled, a terminal
 printing and a page of text, at eight sizes: a Windows desktop over RDP at
 five and a virtual Mac at three, at quality 90 with the loop filter on
@@ -335,7 +335,7 @@ are compared with a Mac's.
 the iOS Simulator (`TARGET=sim`, the default) or on the Mac
 (`TARGET=safari`). It serves a page from `http://localhost`, cross-origin
 isolated, that decodes each sample in a worker with the pool's threads as
-workers of that worker, as remotex's page does, one run a page load, the
+workers of that worker, as zDesk's page does, one run a page load, the
 builds alternating round by round; the first round checks every picture
 against libvpx's MD5s. It prints the medians of the mean and the median ms a
 frame after the first. A browser gives time and no counts.
@@ -343,7 +343,7 @@ frame after the first. A browser gives time and no counts.
 ## Requirements
 
 The page must be cross-origin isolated for `SharedArrayBuffer`, the threads'
-shared memory: remotex's gateway serves every file with
+shared memory: zDesk's gateway serves every file with
 `Cross-Origin-Opener-Policy: same-origin` and
 `Cross-Origin-Embedder-Policy: require-corp`. The browser must run WebAssembly
 with SIMD128 and threads.

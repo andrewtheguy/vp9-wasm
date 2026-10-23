@@ -1,4 +1,4 @@
-//! The page's VP9 decoder, as remotex's decode worker drives it: one frame
+//! The page's VP9 decoder, as zDesk's decode worker drives it: one frame
 //! in, at most one picture out, the picture's planes left in this module's
 //! memory for the paint worker to upload to the GPU from there.
 //!

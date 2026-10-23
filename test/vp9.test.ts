@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { type Fixture, type FixtureName, loadFixtures } from "./fixtures";
 import { decodeFrame, decodeHeld, type LoadedModule, loadModule, type ModuleDecoder, type ModulePicture, pictureMd5 } from "./module";
 
-// The pool remotex would start, at most.
+// The pool zDesk would start, at most.
 const POOL = 4;
 
 let loaded: LoadedModule;

@@ -1,4 +1,4 @@
-// The page of bench/page/serve.ts: asks the server for the next run, decodes it in a worker as remotex's page does,
+// The page of bench/page/serve.ts: asks the server for the next run, decodes it in a worker as zDesk's page does,
 // sends the result back, and reloads, so that each run starts with an engine that has compiled nothing yet.
 const status = document.getElementById("status");
 const say = (text) => (status.textContent = text);

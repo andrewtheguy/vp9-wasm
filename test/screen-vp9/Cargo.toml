@@ -1,5 +1,5 @@
 # Writes the fixtures that libvpx as ffmpeg drives it cannot: a stream coded
-# by screen-vp9 told where the picture changed, as the remotex gateway and
+# by screen-vp9 told where the picture changed, as the zDesk gateway and
 # wlshare code theirs, which libvpx codes with segmentation. Run by
 # `bun run fixtures` for the specs in test/fixtures.ts that name it; apart
 # from the decoder's workspace, since it builds libvpx's archive in.
